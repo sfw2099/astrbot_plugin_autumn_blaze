@@ -1,6 +1,29 @@
 # 🍂 AstrBot 秋焰插件 (autumn_blaze)
 
+![Version](https://img.shields.io/badge/version-v1.0.0-blue)
+![Python](https://img.shields.io/badge/python-3.10%2B-green)
+![License](https://img.shields.io/badge/license-MIT-orange)
+
 融合 **每日签到运势** + **抽老婆/强娶/求婚** + **群友忠诚值档案系统** 的 AstrBot 综合插件。
+
+---
+
+## 安装
+
+### 方式一：AstrBot 插件市场
+在 AstrBot WebUI 插件管理器中搜索 `autumn_blaze` 一键安装。
+
+### 方式二：手动安装
+```bash
+# 克隆到 AstrBot addons 目录
+git clone https://github.com/sfw2099/astrbot_plugin_autumn_blaze.git
+```
+或直接将 `astrbot_plugin_autumn_blaze` 文件夹放入 AstrBot 的 `addons` 目录，重启 AstrBot 即可加载。
+
+### 依赖
+- **AstrBot** >= v4.23
+
+---
 
 ## 功能
 
@@ -78,7 +101,7 @@
 | `iterations` | int | 140 | 关系图迭代次数 |
 | `keyword_trigger_enabled` | bool | false | 关键词触发（无需 `/` 前缀） |
 | `keyword_trigger_mode` | string | exact | 匹配模式：exact/starts_with/contains |
-| `auto_set_other_half` | bool | false | 自动设置对方老婆 |
+| `auto_set_other_half` | bool | false | 抽到老婆时自动给对方绑定 |
 | `auto_withdraw_enabled` | bool | false | 定时自动撤回消息 |
 | `auto_withdraw_delay_seconds` | int | 5 | 自动撤回延迟（秒） |
 | `allow_marry_bot` | bool | false | 允许抽取/强娶机器人 |
@@ -86,23 +109,27 @@
 
 ---
 
-## 安装
-
-1. 将 `astrbot_plugin_autumn_blaze` 目录放入 AstrBot 的 `addons` 目录下
-2. 重启 AstrBot 或使用插件管理器加载
-3. 发送 `/帮助` 查看完整指令说明
-
-### 数据存储
+## 数据存储
 
 插件数据存储在 `<AstrBot数据目录>/autumn_blaze/` 下：
-- `wife_records.json` — 每日老婆抽取记录
-- `active_users.json` — 活跃用户池
-- `profiles/{uid}.json` — 每个群友的忠诚值档案
+
+| 文件 | 说明 |
+|------|------|
+| `wife_records.json` | 每日老婆抽取记录 |
+| `active_users.json` | 活跃用户池 |
+| `profiles/{uid}.json` | 每位群友的忠诚值档案 |
 
 ---
 
-## 鸣谢
+## 致谢
 
-本插件基于以下项目功能整合开发：
+本插件整合了以下项目的功能：
+
 - [astrbot_plugin_jrrp](https://github.com/sfw2099/astrbot_plugin_jrrp) — 签到运势功能
 - [astrbot-plugin-wifepicker](https://github.com/Heximiao/astrbot-plugin-wifepicker) — 抽老婆/强娶/求婚/关系图功能
+
+---
+
+## License
+
+MIT License
