@@ -28,9 +28,10 @@ async def cmd_propose(plugin_instance, event: AstrMessageEvent):
         yield event.plain_result(block_msg)
         return
 
-    for _req_key, _req in propose_requests.get(group_id, {}).items():
-        if _req.get("proposer_id") == user_id and time.time() <= _req.get("expire", 0):
-            remain = int(_req["expire"] - time.time())
+    if group_id in propose_requests and user_id in propose_requests[group_id]:
+        req = propose_requests[group_id][user_id]
+        if time.time() <= req.get("expire", 0):
+            remain = int(req["expire"] - time.time())
             yield event.plain_result(f"你还有一个求婚请求正在进行中，请在 {remain} 秒后再发起。")
             return
 
@@ -59,14 +60,12 @@ async def cmd_propose(plugin_instance, event: AstrMessageEvent):
     if group_id not in propose_requests:
         propose_requests[group_id] = {}
 
-    if is_all_target:
-        key = "__all__"
-    else:
-        key = target_id
+    target_key = "__all__" if is_all_target else target_id
 
-    propose_requests[group_id][key] = {
+    propose_requests[group_id][user_id] = {
         "proposer_id": user_id,
         "proposer_name": event.get_sender_name() or f"用户({user_id})",
+        "target_id": target_key,
         "target_name": target_name,
         "expire": now + 60,
         "umo": event.unified_msg_origin,
@@ -80,8 +79,8 @@ async def cmd_propose(plugin_instance, event: AstrMessageEvent):
 
     await asyncio.sleep(60)
 
-    if group_id in propose_requests and key in propose_requests[group_id]:
-        req = propose_requests[group_id][key]
+    if group_id in propose_requests and user_id in propose_requests[group_id]:
+        req = propose_requests[group_id][user_id]
         if req["proposer_id"] == user_id:
             if is_all_target:
                 plugin_instance._profile_manager.update_yesterday_propose(user_id, None)
@@ -100,7 +99,7 @@ async def cmd_propose(plugin_instance, event: AstrMessageEvent):
                 from astrbot.api import logger
                 logger.error(f"[propose] 发送超时提醒失败: {e}")
 
-            del propose_requests[group_id][key]
+            del propose_requests[group_id][user_id]
 
 
 async def handle_propose_response(plugin_instance, event: AstrMessageEvent):
@@ -114,29 +113,45 @@ async def handle_propose_response(plugin_instance, event: AstrMessageEvent):
     if msg not in ["同意求婚", "我同意", "同意"]:
         return
 
-    if user_id in propose_requests[group_id]:
-        req = propose_requests[group_id][user_id]
-        if req.get("is_all_target"):
-            return
-        if time.time() > req["expire"]:
-            del propose_requests[group_id][user_id]
-            return
+    now = time.time()
+
+    target_matches = []
+    all_matches = []
+    for proposer_id, req in list(propose_requests[group_id].items()):
+        if now > req.get("expire", 0):
+            del propose_requests[group_id][proposer_id]
+            continue
+        if req.get("target_id") == user_id and not req.get("is_all_target"):
+            target_matches.append((proposer_id, req))
+        elif req.get("target_id") == "__all__":
+            if user_id != proposer_id:
+                all_matches.append((proposer_id, req))
+
+    all_candidates = target_matches + all_matches
+
+    if not all_candidates:
+        return
+
+    if len(target_matches) > 1:
+        names = "、".join(req["proposer_name"] for _, req in target_matches)
+        yield event.plain_result(
+            f"有 {len(target_matches)} 人向你求婚（{names}），"
+            f"请 @ 对方回复「同意」来选择接受谁。"
+        )
+        return
+
+    if len(all_candidates) == 1:
+        proposer_id, req = all_candidates[0]
         async for result in _accept_proposal(plugin_instance, event, group_id, user_id, req):
             yield result
         return
 
-    all_key = "__all__"
-    if all_key in propose_requests[group_id]:
-        req = propose_requests[group_id][all_key]
-        if time.time() > req["expire"]:
-            del propose_requests[group_id][all_key]
-            return
-        proposer_id = req["proposer_id"]
-        if user_id == proposer_id:
-            return
-        async for result in _accept_proposal(plugin_instance, event, group_id, user_id, req):
-            yield result
-        return
+    if len(all_candidates) > 1:
+        names = "、".join(req["proposer_name"] for _, req in all_candidates)
+        yield event.plain_result(
+            f"有 {len(all_candidates)} 人向你求婚（{names}），"
+            f"请 @ 对方回复「同意」来选择接受谁。"
+        )
 
 
 async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
@@ -185,8 +200,9 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
 
     save_json(plugin_instance.records_file, plugin_instance.records)
 
-    if not is_all:
-        del propose_requests[group_id][accepter_id]
+    proposer_key = proposer_id
+    if group_id in propose_requests and proposer_key in propose_requests[group_id]:
+        del propose_requests[group_id][proposer_key]
 
     event.stop_event()
     yield event.plain_result(
