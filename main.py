@@ -1,0 +1,712 @@
+import asyncio
+import os
+import random
+from datetime import datetime
+
+import astrbot.api.message_components as Comp
+from astrbot.api import AstrBotConfig, logger
+from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.star import Context, Star, register
+from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
+    AiocqhttpMessageEvent,
+)
+from astrbot.core.star.filter.permission import PermissionTypeFilter
+from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
+
+from .keyword_trigger import KeywordRouter, MatchMode
+from .onebot_api import extract_message_id
+from .waifu_relations import maybe_add_other_half_record
+from .profiles import ProfileManager
+from .propose import cmd_propose, handle_propose_response
+
+from .constants import _DEFAULT_KEYWORD_ROUTES
+from .utils import (
+    load_json,
+    save_json,
+    normalize_user_id_set,
+    extract_target_id_from_message,
+    is_allowed_group,
+    resolve_member_name,
+)
+
+from .debug_utils import run_debug_graph
+from .core import (
+    send_onebot_message,
+    schedule_onebot_delete_msg,
+    record_active,
+    draw_excluded_users,
+    force_marry_excluded_users,
+    ensure_today_records,
+    get_group_records,
+    auto_set_other_half_enabled,
+    auto_withdraw_enabled,
+    auto_withdraw_delay_seconds,
+    can_onebot_withdraw,
+    cleanup_inactive,
+)
+
+
+@register("autumn_blaze", "ALin", "秋焰插件-签到运势+抽老婆+强娶+求婚", "1.0.0")
+class AutumnBlazePlugin(Star):
+    def __init__(self, context: Context, config: AstrBotConfig = None):
+        super().__init__(context)
+        self.config = config
+
+        self.curr_dir = os.path.dirname(__file__)
+
+        self._withdraw_tasks: set[asyncio.Task] = set()
+
+        self.data_dir = os.path.join(get_astrbot_plugin_data_path(), "autumn_blaze")
+        self.records_file = os.path.join(self.data_dir, "wife_records.json")
+        self.active_file = os.path.join(self.data_dir, "active_users.json")
+        self.forced_file = os.path.join(self.data_dir, "forced_marriage.json")
+        self.profiles_dir = os.path.join(self.data_dir, "profiles")
+
+        os.makedirs(self.data_dir, exist_ok=True)
+
+        self.records = load_json(self.records_file, {"date": "", "groups": {}})
+        self.active_users = load_json(self.active_file, {})
+        self.forced_records = load_json(self.forced_file, {})
+
+        self._profile_manager = ProfileManager(self.profiles_dir)
+
+        self._keyword_router = KeywordRouter(routes=_DEFAULT_KEYWORD_ROUTES)
+        self._keyword_handlers = {
+            "draw_wife": self._cmd_draw_wife,
+            "show_history": self._cmd_show_history,
+            "force_marry": self._cmd_force_marry,
+            "show_graph": self._cmd_show_graph,
+            "show_help": self._cmd_show_help,
+            "reset_records": self._cmd_reset_records,
+            "reset_force_cd": self._cmd_reset_force_cd,
+            "propose_command": self.propose_command,
+        }
+        self._keyword_trigger_block_prefixes = ("/", "!", "！")
+        logger.info(f"秋焰插件已加载。数据目录: {self.data_dir}")
+
+    def _get_profile(self, user_id: str) -> dict:
+        return self._profile_manager.get_profile(user_id)
+
+    def _get_keyword_trigger_mode(self) -> MatchMode:
+        raw = self.config.get("keyword_trigger_mode", "contains")
+        try:
+            return MatchMode(str(raw))
+        except ValueError:
+            return MatchMode.CONTAINS
+
+    def _draw_excluded_users(self) -> set[str]:
+        return draw_excluded_users(self)
+
+    def _force_marry_excluded_users(self) -> set[str]:
+        return force_marry_excluded_users(self)
+
+    def _ensure_today_records(self) -> None:
+        return ensure_today_records(self)
+
+    def _get_group_records(self, group_id: str) -> list[dict]:
+        return get_group_records(self, group_id)
+
+    def _auto_set_other_half_enabled(self) -> bool:
+        return auto_set_other_half_enabled(self)
+
+    def _auto_withdraw_enabled(self) -> bool:
+        return auto_withdraw_enabled(self)
+
+    def _auto_withdraw_delay_seconds(self) -> int:
+        return auto_withdraw_delay_seconds(self)
+
+    def _can_onebot_withdraw(self, event: AstrMessageEvent) -> bool:
+        return can_onebot_withdraw(self, event)
+
+    async def _send_onebot_message(
+        self, event: AstrMessageEvent, *, message: list[dict]
+    ) -> object:
+        return await send_onebot_message(self, event, message=message)
+
+    def _schedule_onebot_delete_msg(self, client, *, message_id: object) -> None:
+        return schedule_onebot_delete_msg(self, client, message_id=message_id)
+
+    def _record_active(self, event: AstrMessageEvent) -> None:
+        return record_active(self, event)
+
+    def _cleanup_inactive(self, group_id: str):
+        return cleanup_inactive(self, group_id)
+
+    def _generate_fortune(self, is_weighted: bool) -> int:
+        if is_weighted:
+            weights = [1, 3, 3, 1]
+            ranges = [(1, 20), (21, 50), (51, 80), (81, 99)]
+            selected_range = random.choices(ranges, weights=weights, k=1)[0]
+            return random.randint(selected_range[0], selected_range[1])
+        return random.randint(1, 99)
+
+    async def _ai_reply(
+        self, event: AstrMessageEvent, user_name: str, rp: int, scene: str = "签到"
+    ) -> str | None:
+        provider = self.context.get_using_provider()
+        if not provider:
+            return None
+        system_prompt = ""
+        try:
+            personality = await self.context.persona_manager.get_default_persona_v3(
+                event.unified_msg_origin
+            )
+            if personality:
+                system_prompt = personality["prompt"]
+        except Exception as e:
+            logger.warning(f"[autumn_blaze] 获取人格失败: {e}")
+        if scene == "签到":
+            prompt = (
+                f"用户 {user_name} 刚刚进行了每日签到，抽到的运势值为 {rp}（满分100）。"
+                f"请根据运势值回应：>70 热情夸赞鼓励，<30 温柔安慰鼓励，30~70 平淡带过。"
+                f"回复控制在60字以内。"
+            )
+        else:
+            prompt = (
+                f"用户 {user_name} 修改了自己的运势值，新的运势值为 {rp}（满分100）。"
+                f"请根据运势值回应：>70 热情夸赞鼓励，<30 温柔安慰鼓励，30~70 平淡带过。"
+                f"回复控制在60字以内。"
+            )
+        response = await provider.text_chat(prompt=prompt, system_prompt=system_prompt)
+        return response.completion_text or None
+
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def keyword_trigger(self, event: AstrMessageEvent):
+        if not self.config.get("keyword_trigger_enabled", False):
+            return
+        message_str = event.message_str
+        if not message_str:
+            return
+        if event.is_at_or_wake_command:
+            return
+        if message_str.startswith(self._keyword_trigger_block_prefixes):
+            return
+        mode = self._get_keyword_trigger_mode()
+        route = self._keyword_router.match_route(message_str, mode=mode)
+        if route is None:
+            route = self._keyword_router.match_command_route(message_str)
+        if route:
+            self._record_active(event)
+            handler = self._keyword_handlers.get(route.action)
+            if handler:
+                async for result in handler(event):
+                    yield result
+                event.stop_event()
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def track_active(self, event: AstrMessageEvent):
+        self._record_active(event)
+        if not event.is_private_chat():
+            async for result in handle_propose_response(self, event):
+                yield result
+
+    # ==================== 签到 ====================
+
+    @filter.command("签到", alias={"今日运势", "今日人品", "jrrp"})
+    async def checkin(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id()
+        user_name = event.get_sender_name()
+        config = self.get_plugin_config()
+        max_modify = config.get("max_modify_attempts", 1)
+        profile = self._profile_manager.get_profile(user_id)
+        self._profile_manager.ensure_daily_reset(user_id, profile)
+        existing_fortune = profile.get("today_fortune")
+        if existing_fortune is not None:
+            yield event.plain_result(f"{user_name}，今日已签到！运势值：{existing_fortune}")
+            return
+        is_weighted = config.get("weighted_random", True)
+        rp = self._generate_fortune(is_weighted)
+        self._profile_manager.set_fortune(user_id, rp, modifications=max_modify)
+        try:
+            ai_text = await self._ai_reply(event, user_name, rp)
+            if ai_text:
+                yield event.plain_result(f"✨ {user_name} 签到成功！运势值：{rp}\n{ai_text}")
+                return
+        except Exception as e:
+            logger.error(f"[autumn_blaze] AI 调用异常: {e}")
+        yield event.plain_result(f"✨ {user_name} 签到成功！运势值：{rp}")
+
+    # ==================== 修改运势 ====================
+
+    @filter.command("修改运势")
+    async def modify_fortune(self, event: AstrMessageEvent):
+        user_id = event.get_sender_id()
+        user_name = event.get_sender_name()
+        profile = self._profile_manager.get_profile(user_id)
+        self._profile_manager.ensure_daily_reset(user_id, profile)
+        current_rp = profile.get("today_fortune")
+        if current_rp is None:
+            yield event.plain_result("请先进行签到")
+            return
+        remaining = profile.get("modifications_left", 0)
+        if remaining <= 0:
+            yield event.plain_result(f"{user_name}，今日的修改运势次数已用完！运势值：{current_rp}")
+            return
+        success_prob = (100 - current_rp) / 100.0
+        roll = random.random()
+        roll_pct = int(roll * 100)
+        need = int((1 - success_prob) * 100)
+        dice_text = f"D100={roll_pct} (需<{need})"
+        if roll >= success_prob:
+            profile["modifications_left"] = remaining - 1
+            self._profile_manager.save_profile(user_id, profile)
+            yield event.plain_result(f"没能改变命运。{dice_text}")
+            return
+        new_rp = random.randint(current_rp + 1, 100)
+        self._profile_manager.set_fortune(user_id, new_rp, modifications=remaining - 1)
+        try:
+            ai_text = await self._ai_reply(event, user_name, new_rp, scene="修改运势")
+            if ai_text:
+                yield event.plain_result(f"✨ {user_name} 成功改变命运！{dice_text}\n运势值：{current_rp} → {new_rp}\n{ai_text}")
+                return
+        except Exception as e:
+            logger.error(f"[autumn_blaze] AI 调用异常: {e}")
+        yield event.plain_result(f"✨ {user_name} 成功改变命运！{dice_text}\n运势值：{current_rp} → {new_rp}")
+
+    # ==================== 抽老婆 ====================
+
+    @filter.command("今日老婆", alias={"抽老婆", "jrlp"})
+    async def draw_wife(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_draw_wife(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 抽老婆异常: {e}", exc_info=True)
+            yield event.plain_result(f"抽老婆出错了：{e}")
+
+    @filter.command("我的老婆", alias={"抽取历史", "wdlp"})
+    async def show_history(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_show_history(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 历史异常: {e}", exc_info=True)
+            yield event.plain_result(f"查看历史出错了：{e}")
+
+    @filter.command("关系图", alias={"gxt"})
+    async def show_graph(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_show_graph(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 关系图异常: {e}", exc_info=True)
+            yield event.plain_result(f"关系图出错了：{e}")
+
+    async def _cmd_draw_wife(self, event: AstrMessageEvent):
+        if event.is_private_chat():
+            yield event.plain_result("此功能仅在群聊中可用哦~")
+            return
+        group_id = str(event.get_group_id())
+        save_json(self.active_file, self.active_users, self.active_file, self.config)
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+        user_id, bot_id = str(event.get_sender_id()), str(event.get_self_id())
+        self._cleanup_inactive(group_id)
+        daily_limit = self.config.get("daily_limit", 1)
+        group_records = self._get_group_records(group_id)
+        user_recs = [r for r in group_records if r["user_id"] == user_id]
+        today_count = len(user_recs)
+        if today_count >= daily_limit:
+            if daily_limit == 1:
+                wife_record = user_recs[0]
+                wife_name, wife_id = wife_record["wife_name"], wife_record["wife_id"]
+                wife_avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={wife_id}&spec=640"
+                if self._can_onebot_withdraw(event):
+                    message_id = await self._send_onebot_message(
+                        event,
+                        message=[
+                            {"type": "at", "data": {"qq": user_id}},
+                            {"type": "text", "data": {"text": f" 你今天已经有老婆了哦❤️~\n她是：【{wife_name}】\n"}},
+                            {"type": "image", "data": {"file": wife_avatar}},
+                        ],
+                    )
+                    if message_id is not None:
+                        self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
+                    return
+                chain = [Comp.At(qq=user_id), Comp.Plain(f" 你今天已经有老婆了哦❤️~\n她是：【{wife_name}】\n"), Comp.Image.fromURL(wife_avatar)]
+                yield event.chain_result(chain)
+            else:
+                text = f"你今天已经抽了{today_count}次老婆了，明天再来吧！"
+                if self._can_onebot_withdraw(event):
+                    message_id = await self._send_onebot_message(event, message=[{"type": "text", "data": {"text": text}}])
+                    if message_id is not None:
+                        self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
+                    return
+                yield event.plain_result(text)
+            return
+        current_member_ids: list[str] = []
+        members = []
+        try:
+            if event.get_platform_name() == "aiocqhttp":
+                assert isinstance(event, AiocqhttpMessageEvent)
+                members = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
+                if isinstance(members, dict) and "data" in members and isinstance(members["data"], list):
+                    members = members["data"]
+                current_member_ids = [str(m.get("user_id")) for m in members]
+        except Exception as e:
+            logger.warning(f"[autumn_blaze] 获取群成员列表失败: {e}")
+        active_pool = self.active_users.get(group_id, {})
+        excluded = self._draw_excluded_users()
+        if not self.config.get("allow_marry_bot", False):
+            excluded.add(bot_id)
+        excluded.update([user_id, "0"])
+        if current_member_ids:
+            pool = [uid for uid in active_pool.keys() if uid not in excluded and uid in current_member_ids]
+            removed_uids = [uid for uid in active_pool.keys() if uid not in current_member_ids]
+            if removed_uids:
+                for r_uid in removed_uids:
+                    del self.active_users[group_id][r_uid]
+                save_json(self.active_file, self.active_users)
+        else:
+            pool = [uid for uid in active_pool.keys() if uid not in excluded]
+        if not pool:
+            yield event.plain_result("老婆池为空（需有人在30天内发言）。")
+            return
+        wife_id = random.choice(pool)
+        wife_name = f"用户({wife_id})"
+        user_name = event.get_sender_name() or f"用户({user_id})"
+        try:
+            if event.get_platform_name() == "aiocqhttp":
+                wife_name = resolve_member_name(members, user_id=wife_id, fallback=wife_name)
+                user_name = resolve_member_name(members, user_id=user_id, fallback=user_name)
+        except Exception:
+            pass
+        self._get_profile(wife_id)
+        self._profile_manager.record_draw(user_id)
+        timestamp = datetime.now().isoformat()
+        group_records.append({"user_id": user_id, "wife_id": wife_id, "wife_name": wife_name, "timestamp": timestamp})
+        maybe_add_other_half_record(
+            records=group_records, user_id=user_id, user_name=user_name,
+            wife_id=wife_id, wife_name=wife_name,
+            enabled=self._auto_set_other_half_enabled(), timestamp=timestamp,
+        )
+        save_json(self.records_file, self.records)
+        avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={wife_id}&spec=640"
+        suffix_text = f"\n请好好对待她哦❤️~\n剩余抽取次数：{max(0, daily_limit - today_count - 1)}次"
+        at_waifu_enabled = self.config.get("at_waifu", False)
+        if self._can_onebot_withdraw(event):
+            msg_list = [
+                {"type": "at", "data": {"qq": user_id}},
+                {"type": "text", "data": {"text": f" 你的今日老婆是：\n\n【{wife_name}】\n"}},
+            ]
+            if at_waifu_enabled:
+                msg_list.append({"type": "at", "data": {"qq": wife_id}})
+                msg_list.append({"type": "text", "data": {"text": " "}})
+            msg_list.extend([{"type": "image", "data": {"file": avatar_url}}, {"type": "text", "data": {"text": suffix_text}}])
+            message_id = await self._send_onebot_message(event, message=msg_list)
+            if message_id is not None:
+                self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
+            return
+        chain = [Comp.At(qq=user_id), Comp.Plain(f" 你的今日老婆是：\n\n【{wife_name}】\n")]
+        if at_waifu_enabled:
+            chain.append(Comp.At(qq=wife_id))
+        chain.extend([Comp.Image.fromURL(avatar_url), Comp.Plain(suffix_text)])
+        yield event.chain_result(chain)
+
+    # ==================== 我的老婆 ====================
+
+    @filter.command("我的老婆", alias={"抽取历史", "wdlp"})
+    async def show_history(self, event: AstrMessageEvent):
+        async for result in self._cmd_show_history(event):
+            yield result
+
+    async def _cmd_show_history(self, event: AstrMessageEvent):
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+        user_id = str(event.get_sender_id())
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self.records.get("date") != today:
+            yield event.plain_result("你今天还没有抽过老婆哦~")
+            return
+        group_recs = self.records.get("groups", {}).get(group_id, {}).get("records", [])
+        user_recs = [r for r in group_recs if r["user_id"] == user_id]
+        if not user_recs:
+            yield event.plain_result("你今天还没有抽过老婆哦~")
+            return
+        daily_limit = self.config.get("daily_limit", 3)
+        res = [f"🌸 你今日的老婆记录 ({len(user_recs)}/{daily_limit})："]
+        for i, r in enumerate(user_recs, 1):
+            time_str = datetime.fromisoformat(r["timestamp"]).strftime("%H:%M")
+            res.append(f"{i}. 【{r['wife_name']}】 ({time_str})")
+        res.append(f"\n剩余次数：{max(0, daily_limit - len(user_recs))}次")
+        yield event.plain_result("\n".join(res))
+
+    # ==================== 强娶 ====================
+
+    @filter.command("强娶", alias={"qiangqu"})
+    async def force_marry(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_force_marry(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 强娶异常: {e}", exc_info=True)
+            yield event.plain_result(f"强娶出错了：{e}")
+
+    async def _cmd_force_marry(self, event: AstrMessageEvent):
+        if event.is_private_chat():
+            yield event.plain_result("此功能仅在群聊中可用哦~")
+            return
+        user_id = str(event.get_sender_id())
+        bot_id = str(event.get_self_id())
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+        target_id = extract_target_id_from_message(event)
+        is_all_target = (not target_id or target_id == "all")
+        if target_id == user_id:
+            yield event.plain_result("不能娶自己！")
+            return
+        force_excluded = self._force_marry_excluded_users()
+        if not self.config.get("allow_marry_bot", False):
+            force_excluded.add(bot_id)
+        force_excluded.add("0")
+
+        if is_all_target:
+            self._cleanup_inactive(group_id)
+            members = []
+            current_member_ids = []
+            try:
+                if event.get_platform_name() == "aiocqhttp":
+                    assert isinstance(event, AiocqhttpMessageEvent)
+                    members = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
+                    if isinstance(members, dict) and "data" in members and isinstance(members["data"], list):
+                        members = members["data"]
+                    current_member_ids = [str(m.get("user_id")) for m in members]
+            except Exception as e:
+                logger.warning(f"[autumn_blaze] 获取群成员列表失败: {e}")
+            active_pool = self.active_users.get(group_id, {})
+            if current_member_ids:
+                pool = [uid for uid in active_pool if uid not in force_excluded and uid in current_member_ids and uid != user_id]
+            else:
+                pool = [uid for uid in active_pool if uid not in force_excluded and uid != user_id]
+            if not pool:
+                yield event.plain_result("老婆池为空，无法进行全体强娶。")
+                return
+            result = self._profile_manager.can_force_marry_all(user_id)
+            if result["blocked"]:
+                yield event.plain_result("你的运势和境遇尚不足以进行全体强娶。再试试吧~")
+                return
+            dice_text = f"D100={result['roll']} | {result['threshold']}-{result['roll']}={result['diff']} (需>100)"
+            if not result["success"]:
+                yield event.plain_result(f"全体强娶失败！{dice_text}\n再试试吧~")
+                return
+            for t_id in pool:
+                self._get_profile(t_id)
+            user_name = event.get_sender_name() or f"用户({user_id})"
+            if members:
+                user_name = resolve_member_name(members, user_id=user_id, fallback=user_name)
+            group_records = self._get_group_records(group_id)
+            group_records[:] = [r for r in group_records if r["user_id"] != user_id]
+            timestamp = datetime.now().isoformat()
+            for t_id in pool:
+                t_name = f"用户({t_id})"
+                if members:
+                    t_name = resolve_member_name(members, user_id=t_id, fallback=t_name)
+                group_records.append({"user_id": user_id, "wife_id": t_id, "wife_name": t_name, "timestamp": timestamp, "forced": True, "forced_all": True})
+                maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
+            save_json(self.records_file, self.records)
+            text = f" 全体强娶成功！{dice_text}\n后宫+{len(pool)}位群友~\n"
+            if self._can_onebot_withdraw(event):
+                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}])
+                if message_id is not None:
+                    self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
+                return
+            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text)])
+            return
+
+        if target_id in force_excluded:
+            yield event.plain_result("该用户在强娶排除列表中，无法被强娶。")
+            return
+        self._get_profile(target_id)
+        result = self._profile_manager.can_force_marry(user_id)
+        if result["blocked"]:
+            yield event.plain_result("你的运势和境遇尚不足以强娶他人。再试试吧~")
+            return
+        dice_text = f"D100={result['roll']} (需<{result['threshold']})"
+        if not result["success"]:
+            yield event.plain_result(f"强娶失败！{dice_text}\n再试试吧~")
+            return
+        target_name = f"用户({target_id})"
+        user_name = event.get_sender_name() or f"用户({user_id})"
+        members = []
+        try:
+            if event.get_platform_name() == "aiocqhttp":
+                assert isinstance(event, AiocqhttpMessageEvent)
+                resp = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
+                if isinstance(resp, dict) and "data" in resp and isinstance(resp["data"], list):
+                    members = resp["data"]
+                target_name = resolve_member_name(members, user_id=target_id, fallback=target_name)
+                user_name = resolve_member_name(members, user_id=user_id, fallback=user_name)
+        except Exception:
+            pass
+        group_records = self._get_group_records(group_id)
+        group_records[:] = [r for r in group_records if r["user_id"] != user_id]
+        timestamp = datetime.now().isoformat()
+        group_records.append({"user_id": user_id, "wife_id": target_id, "wife_name": target_name, "timestamp": timestamp, "forced": True})
+        maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=target_id, wife_name=target_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
+        save_json(self.records_file, self.records)
+        avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={target_id}&spec=640"
+        text = f" 强娶成功！{dice_text}\n娶到了【{target_name}】！请对她好一点哦~\n"
+        if self._can_onebot_withdraw(event):
+            message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": avatar_url}}])
+            if message_id is not None:
+                self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
+            return
+        yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromURL(avatar_url)])
+
+    # ==================== 关系图 ====================
+
+    @filter.command("关系图", alias={"gxt"})
+    async def show_graph(self, event: AstrMessageEvent):
+        async for result in self._cmd_show_graph(event):
+            yield result
+
+    async def _cmd_show_graph(self, event: AstrMessageEvent):
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+        iter_count = self.config.get("iterations", 140)
+        vis_js_path = os.path.join(self.curr_dir, "vis-network.min.js")
+        vis_js_content = ""
+        if os.path.exists(vis_js_path):
+            with open(vis_js_path, "r", encoding="utf-8") as f:
+                vis_js_content = f.read()
+        else:
+            logger.error(f"找不到 JS 文件: {vis_js_path}")
+        template_path = os.path.join(self.curr_dir, "graph_template.html")
+        if not os.path.exists(template_path):
+            yield event.plain_result(f"错误：找不到模板文件 {template_path}")
+            return
+        with open(template_path, "r", encoding="utf-8") as f:
+            graph_html = f.read()
+        group_data = self.records.get("groups", {}).get(group_id, {}).get("records", [])
+        group_name = "未命名群聊"
+        user_map = {}
+        try:
+            if event.get_platform_name() == "aiocqhttp":
+                info = await event.bot.api.call_action("get_group_info", group_id=int(group_id))
+                if isinstance(info, dict) and "data" in info and isinstance(info["data"], dict):
+                    info = info["data"]
+                group_name = info.get("group_name", "未命名群聊")
+                members = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
+                if isinstance(members, dict) and "data" in members and isinstance(members["data"], list):
+                    members = members["data"]
+                if isinstance(members, list):
+                    for m in members:
+                        uid = str(m.get("user_id"))
+                        user_map[uid] = m.get("card") or m.get("nickname") or uid
+        except Exception as e:
+            logger.warning(f"获取群信息失败: {e}")
+        unique_nodes = set()
+        for r in group_data:
+            unique_nodes.add(str(r.get("user_id")))
+            unique_nodes.add(str(r.get("wife_id")))
+        node_count = len(unique_nodes)
+        clip_width = 1920
+        clip_height = 1080 + (max(0, node_count - 10) * 60)
+        try:
+            url = await self.html_render(graph_html, {
+                "vis_js_content": vis_js_content, "group_id": group_id,
+                "group_name": group_name, "user_map": user_map,
+                "records": group_data, "iterations": iter_count,
+            }, options={
+                "type": "png", "quality": None, "scale": "device",
+                "clip": {"x": 0, "y": 0, "width": clip_width, "height": clip_height},
+                "full_page": False, "device_scale_factor_level": "ultra",
+            })
+            yield event.image_result(url)
+        except Exception as e:
+            logger.error(f"渲染失败: {e}")
+
+    # ==================== 帮助 ====================
+
+    @filter.command("抽老婆帮助", alias={"老婆插件帮助", "clpbz", "帮助"})
+    async def show_help(self, event: AstrMessageEvent):
+        async for result in self._cmd_show_help(event):
+            yield result
+
+    async def _cmd_show_help(self, event: AstrMessageEvent):
+        if not is_allowed_group(str(event.get_group_id()), self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+        daily_limit = self.config.get("daily_limit", 3)
+        max_modify = self.config.get("max_modify_attempts", 1)
+        help_text = (
+            "===== 秋焰插件 帮助 =====\n"
+            "── 签到运势 ──\n"
+            f"1. 【签到】/【今日运势】/【jrrp】：生成每日运势值\n"
+            f"2. 【修改运势】：尝试改变运势（每日{max_modify}次）\n"
+            "── 抽老婆 ──\n"
+            "3. 【抽老婆】/【今日老婆】：随机抽取今日老婆\n"
+            "4. 【强娶 @某人】：强行更换今日老婆（无冷却）\n"
+            "5. 【强娶】：不@任何人可全体强娶（判定更严格）\n"
+            "6. 【我的老婆】：查看今日历史与次数\n"
+            "7. 【关系图】：查看群友老婆关系图\n"
+            "8. 【求婚 @某人】：向对方发起求婚\n"
+            "9. 【求婚】：不@任何人可向全体发起求婚\n"
+            "10. 【重置记录】：(管理员) 清空数据\n"
+            "11. 【重置强娶时间】：(管理员) 重置强娶冷却\n"
+            f"── 设置 ──\n"
+            f"当前每日抽取上限：{daily_limit}次\n"
+        )
+        yield event.plain_result(help_text)
+
+    # ==================== 管理命令 ====================
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("重置记录", alias={"czjl"})
+    async def reset_records(self, event: AstrMessageEvent):
+        async for result in self._cmd_reset_records(event):
+            yield result
+
+    async def _cmd_reset_records(self, event: AstrMessageEvent):
+        self.records = {"date": datetime.now().strftime("%Y-%m-%d"), "groups": {}}
+        save_json(self.records_file, self.records)
+        yield event.plain_result("今日抽取记录已重置！")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("重置强娶时间", alias={"czqqsj"})
+    async def reset_force_cd(self, event: AstrMessageEvent):
+        async for result in self._cmd_reset_force_cd(event):
+            yield result
+
+    async def _cmd_reset_force_cd(self, event: AstrMessageEvent):
+        group_id = str(event.get_group_id())
+        if hasattr(self, "forced_records") and group_id in self.forced_records:
+            self.forced_records[group_id] = {}
+            save_json(self.forced_file, self.forced_records)
+            yield event.plain_result("✅ 本群强娶冷却时间已重置！")
+        else:
+            yield event.plain_result("💡 本群目前没有人在冷却期内。")
+
+    @filter.command("求婚", alias={"qh"})
+    async def propose_command(self, event: AstrMessageEvent):
+        try:
+            async for result in cmd_propose(self, event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 求婚异常: {e}", exc_info=True)
+            yield event.plain_result(f"求婚出错了：{e}")
+
+    @filter.command("debug_graph")
+    async def debug_graph(self, event: AstrMessageEvent):
+        async for result in run_debug_graph(self, event):
+            yield result
+
+    def get_plugin_config(self):
+        global_config = self.context.get_config() or {}
+        plugins_cfg = global_config.get("plugins", {})
+        if "autumn_blaze" in plugins_cfg:
+            return plugins_cfg["autumn_blaze"]
+        logger.warning(f"[autumn_blaze] 未找到专属配置节点。当前已有的插件配置键为: {list(plugins_cfg.keys())}")
+        return {}
+
+    async def terminate(self):
+        for task in tuple(self._withdraw_tasks):
+            task.cancel()
+        self._withdraw_tasks.clear()

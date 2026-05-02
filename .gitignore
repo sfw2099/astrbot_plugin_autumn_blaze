@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temp
+*.tmp
+*.temp
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Conda
+.conda/

@@ -1,0 +1,113 @@
+{
+    "weighted_random": {
+        "type": "bool",
+        "title": "启用运势高分加权",
+        "description": "开启后，高分段（51-99）的运势值出现概率更高",
+        "default": true
+    },
+    "max_modify_attempts": {
+        "type": "int",
+        "title": "每日修改运势次数",
+        "description": "每位用户每天可尝试修改运势的最大次数",
+        "default": 1
+    },
+    "daily_limit": {
+        "type": "int",
+        "description": "每日抽取上限",
+        "hint": "每位用户每天可以抽取老婆的次数上限。",
+        "default": 1
+    },
+    "max_records": {
+        "type": "int",
+        "description": "活跃群友记录上限",
+        "hint": "跨群累计活跃用户总记录条数，作为抽老婆的候选池。",
+        "default": 500
+    },
+    "excluded_users": {
+        "type": "list",
+        "description": "排除用户列表",
+        "hint": "在此列表中的QQ号将不会被抽中。",
+        "default": []
+    },
+    "force_marry_excluded_users": {
+        "type": "list",
+        "description": "强娶排除用户列表",
+        "hint": "在此列表中的QQ号不会被强娶指令选中。",
+        "default": []
+    },
+    "whitelist_groups": {
+        "type": "list",
+        "description": "群聊白名单",
+        "hint": "若填写，则插件仅在这些群生效。",
+        "default": []
+    },
+    "blacklist_groups": {
+        "type": "list",
+        "description": "群聊黑名单",
+        "hint": "在此列表中的群聊将禁用此插件功能。",
+        "default": []
+    },
+    "iterations": {
+        "type": "int",
+        "description": "关系图生成迭代次数",
+        "hint": "控制关系图生成的精细度。",
+        "default": 140,
+        "slider": {
+            "min": 50,
+            "max": 180,
+            "step": 10
+        }
+    },
+    "keyword_trigger_enabled": {
+        "type": "bool",
+        "description": "关键词触发",
+        "hint": "开启后，直接发送关键词即可触发对应指令。",
+        "default": false
+    },
+    "keyword_trigger_mode": {
+        "type": "string",
+        "description": "关键词匹配模式",
+        "hint": "exact：完全相等；starts_with：以关键词开头；contains：包含关键词即可。",
+        "options": [
+            "exact",
+            "starts_with",
+            "contains"
+        ],
+        "default": "exact"
+    },
+    "auto_set_other_half": {
+        "type": "bool",
+        "description": "自动设置对方老婆",
+        "hint": "开启后，抽到老婆时若对方今天还没有老婆记录，将自动给对方设置你为老婆。",
+        "default": false
+    },
+    "auto_withdraw_enabled": {
+        "type": "bool",
+        "description": "定时自动撤回",
+        "hint": "开启后，将在发送老婆结果后延迟撤回消息。",
+        "default": false
+    },
+    "auto_withdraw_delay_seconds": {
+        "type": "int",
+        "description": "自动撤回延迟(秒)",
+        "hint": "自动撤回延迟时间。",
+        "default": 5,
+        "slider": {
+            "min": 1,
+            "max": 60,
+            "step": 1
+        }
+    },
+    "allow_marry_bot": {
+        "type": "bool",
+        "description": "允许强娶/抽取机器人",
+        "hint": "开启后，机器人也会进入老婆池并可以被强娶。",
+        "default": false
+    },
+    "at_waifu": {
+        "type": "bool",
+        "description": "是否 @ 抽到的老婆",
+        "hint": "开启后，抽到老婆或强娶时会额外 @ 对方。",
+        "default": false
+    }
+}
