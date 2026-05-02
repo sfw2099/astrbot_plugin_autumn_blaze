@@ -28,6 +28,12 @@ async def cmd_propose(plugin_instance, event: AstrMessageEvent):
         yield event.plain_result(block_msg)
         return
 
+    for _req_key, _req in propose_requests.get(group_id, {}).items():
+        if _req.get("proposer_id") == user_id and time.time() <= _req.get("expire", 0):
+            remain = int(_req["expire"] - time.time())
+            yield event.plain_result(f"你还有一个求婚请求正在进行中，请在 {remain} 秒后再发起。")
+            return
+
     if not is_all_target:
         _ = plugin_instance._get_profile(target_id)
 
@@ -62,17 +68,17 @@ async def cmd_propose(plugin_instance, event: AstrMessageEvent):
         "proposer_id": user_id,
         "proposer_name": event.get_sender_name() or f"用户({user_id})",
         "target_name": target_name,
-        "expire": now + 30,
+        "expire": now + 60,
         "umo": event.unified_msg_origin,
         "is_all_target": is_all_target,
     }
 
-    hint = "任意群友在 30 秒内回复「同意」即可接受（支持多人）。" if is_all_target else "请在 30 秒内回复「同意」来接受。"
+    hint = "任意群友在 60 秒内回复「同意」即可接受（支持多人）。" if is_all_target else "请在 60 秒内回复「同意」来接受。"
     yield event.plain_result(
         f"🌹 @{event.get_sender_name()} 向 【{target_name}】 发起了求婚！\n{hint}"
     )
 
-    await asyncio.sleep(30)
+    await asyncio.sleep(60)
 
     if group_id in propose_requests and key in propose_requests[group_id]:
         req = propose_requests[group_id][key]
