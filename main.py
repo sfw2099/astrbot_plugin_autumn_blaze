@@ -245,7 +245,7 @@ class AutumnBlazePlugin(Star):
         success_prob = (100 - current_rp) / 100.0
         roll = random.random()
         roll_pct = int(roll * 100)
-        need = int((1 - success_prob) * 100)
+        need = int(success_prob * 100)
         dice_text = f"D100={roll_pct} (需<{need})"
         if roll >= success_prob:
             profile["modifications_left"] = remaining - 1

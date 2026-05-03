@@ -1,6 +1,5 @@
 name: autumn_blaze
 desc: 秋焰插件 - 融合签到运势、抽老婆/强娶/求婚、群友档案忠诚值系统
-help: 发送「签到」查询今日运势；发送「抽老婆」随机抽取今日老婆；发送「强娶 @某人」强行更换老婆；发送「求婚 @某人」向对方求婚；发送「我的老婆」查看今日历史；发送「关系图」查看群友关系图；发送「帮助」查看完整帮助。
-version: v1.0.0
+version: v1.1.0
 author: ALin
 repo: https://github.com/sfw2099/astrbot_plugin_autumn_blaze.git
