@@ -513,7 +513,7 @@ class AutumnBlazePlugin(Star):
             if result.get("blocked"):
                 yield event.plain_result("羁绊不足，无法进行全体强娶。")
                 return
-            dice_text = f"D100={result['roll']}/5 {result['label']}"
+            dice_text = f"D100={result['roll']}/{result['skill']} {result['label']} (需大成功)"
             if not result["success"]:
                 if result.get("is_crit_fail"):
                     yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
