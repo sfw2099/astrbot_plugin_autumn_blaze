@@ -4,11 +4,11 @@ import random
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-LOYALTY_MIN = 0
-LOYALTY_MAX = 99
+BOND_MIN = 0
+BOND_MAX = 99
 
 DEFAULT_PROFILE = {
-    "loyalty": 50,
+    "bond": 50,
     "today_fortune": None,
     "fortune_date": "",
     "modifications_left": 0,
@@ -20,6 +20,8 @@ DEFAULT_PROFILE = {
     "wife_draw_count_today": 0,
     "draw_date": "",
     "last_propose_date": "",
+    "force_marry_count_today": 0,
+    "force_marry_date": "",
 }
 
 
@@ -29,7 +31,7 @@ def _today_str():
 
 
 def _clamp(value: int) -> int:
-    return max(LOYALTY_MIN, min(LOYALTY_MAX, value))
+    return max(BOND_MIN, min(BOND_MAX, value))
 
 
 class ProfileManager:
@@ -46,10 +48,13 @@ class ProfileManager:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     profile = json.load(f)
+                # 兼容旧存档: loyalty → bond
+                if "loyalty" in profile and "bond" not in profile:
+                    profile["bond"] = profile.pop("loyalty")
                 for k, v in DEFAULT_PROFILE.items():
                     if k not in profile:
                         profile[k] = v
-                profile["loyalty"] = _clamp(profile.get("loyalty", 50))
+                profile["bond"] = _clamp(profile.get("bond", 50))
                 return profile
             except Exception:
                 pass
@@ -61,7 +66,9 @@ class ProfileManager:
     def save_profile(self, user_id: str, profile: dict):
         path = self._file_path(user_id)
         profile["user_id"] = user_id
-        profile["loyalty"] = _clamp(profile.get("loyalty", 50))
+        profile["bond"] = _clamp(profile.get("bond", 50))
+        # 清理旧字段
+        profile.pop("loyalty", None)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(profile, f, ensure_ascii=False, indent=2)
 
@@ -79,6 +86,11 @@ class ProfileManager:
             profile["drew_wife_today"] = False
             profile["wife_draw_count_today"] = 0
             profile["draw_date"] = today
+            changed = True
+
+        if profile.get("force_marry_date") != today:
+            profile["force_marry_count_today"] = 0
+            profile["force_marry_date"] = today
             changed = True
 
         if profile.get("last_propose_date") != today:
@@ -107,74 +119,51 @@ class ProfileManager:
 
     def can_propose(self, user_id: str) -> tuple[bool, int, str]:
         profile = self.get_profile(user_id)
-        loyalty = profile.get("loyalty", 50)
-        if loyalty < 20:
-            return False, loyalty, "你的运势和境遇尚不足以求婚。再试试吧~"
-        return True, loyalty, ""
+        bond = profile.get("bond", 50)
+        if bond < 20:
+            return False, bond, "羁绊不足，尚不足以求婚。再试试吧~"
+        return True, bond, ""
 
     def record_draw(self, user_id: str) -> dict:
+        """抽老婆：不再改变羁绊值"""
         profile = self.get_profile(user_id)
         self.ensure_daily_reset(user_id, profile)
 
         is_first = not profile.get("drew_wife_today", False)
         if is_first:
             profile["drew_wife_today"] = True
-            profile["loyalty"] = _clamp(profile.get("loyalty", 50) + 5)
-            change = 5
-        else:
-            change = 0
 
         profile["wife_draw_count_today"] = profile.get("wife_draw_count_today", 0) + 1
         self.save_profile(user_id, profile)
-        return profile, is_first, change
+        return profile, is_first, 0
 
     def record_propose(self, proposer_id: str, target_id: str) -> dict:
+        """求婚：不再改变羁绊值（仅记录状态）"""
         profile = self.get_profile(proposer_id)
         self.ensure_daily_reset(proposer_id, profile)
 
-        change = 0
-        reasons = []
-
         today = _today_str()
-        proposer_married_to = profile.get("married_to")
-
         if not profile.get("proposed_today", False):
             profile["proposed_today"] = True
             profile["proposed_to_today"] = target_id
             profile["last_propose_date"] = today
-            profile["loyalty"] = _clamp(profile.get("loyalty", 50) + 10)
-            change += 10
-            reasons.append("今日首次求婚 +10")
-
-        yesterday_target = profile.get("yesterday_proposed_to")
-        if yesterday_target and yesterday_target == target_id:
-            profile["loyalty"] = _clamp(profile.get("loyalty", 50) + 5)
-            change += 5
-            reasons.append("与昨日求婚对象一致 +5")
-
-        if proposer_married_to and proposer_married_to != target_id:
-            profile["loyalty"] = _clamp(profile.get("loyalty", 50) - 5)
-            change -= 5
-            reasons.append("已婚情况下向他人求婚 -5")
 
         self.save_profile(proposer_id, profile)
-        return profile, change, reasons
+        return profile, 0, []
 
     def record_propose_accepted(self, proposer_id: str, target_id: str):
+        """求婚成功：双方羁绊 +5"""
         proposer = self.get_profile(proposer_id)
         target = self.get_profile(target_id)
 
         proposer_was_married = proposer.get("married_to")
         target_was_married = target.get("married_to")
 
-        proposer["loyalty"] = _clamp(proposer.get("loyalty", 50) + 5)
-        target["loyalty"] = _clamp(target.get("loyalty", 50) + 5)
-
-        log_parts = ["双方同意 +5"]
+        proposer["bond"] = _clamp(proposer.get("bond", 50) + 5)
+        target["bond"] = _clamp(target.get("bond", 50) + 5)
 
         if target_was_married and target_was_married != proposer_id:
-            target["loyalty"] = _clamp(target.get("loyalty", 50) - 5)
-            log_parts.append("被求婚者已婚 -5")
+            pass  # 不再扣羁绊
 
         if proposer_was_married:
             proposer_old_spouse = self.get_profile(proposer_was_married)
@@ -192,71 +181,132 @@ class ProfileManager:
         self.save_profile(proposer_id, proposer)
         self.save_profile(target_id, target)
 
-        proposer_loyalty = proposer["loyalty"]
-        target_loyalty = target["loyalty"]
+        return proposer, target, proposer["bond"], target["bond"], "求婚成功双方羁绊 +5"
 
-        return proposer, target, proposer_loyalty, target_loyalty, "；".join(log_parts)
+    # ============ COC 骰子系统 ============
 
-    def can_force_marry(self, user_id: str) -> dict:
-        """Returns {success, roll, threshold, loyalty}"""
+    def _coc_roll(self, skill: int) -> dict:
+        """
+        投 1d100 (1~100)，返回 COC 判定结果。
+        返回: {roll, skill, level: 0(大成功)|1(极难)|2(困难)|3(常规)|4(失败)|5(大失败)}
+        """
+        roll = random.randint(1, 100)
+        if roll <= 5:
+            return {"roll": roll, "skill": skill, "level": 0, "label": "大成功"}
+        if roll >= 96:
+            return {"roll": roll, "skill": skill, "level": 5, "label": "大失败"}
+        if roll <= skill // 5:
+            return {"roll": roll, "skill": skill, "level": 1, "label": "极难成功"}
+        if roll <= skill // 2:
+            return {"roll": roll, "skill": skill, "level": 2, "label": "困难成功"}
+        if roll <= skill:
+            return {"roll": roll, "skill": skill, "level": 3, "label": "常规成功"}
+        return {"roll": roll, "skill": skill, "level": 4, "label": "失败"}
+
+    # ============ 强娶判定 ============
+
+    def can_force_marry(self, user_id: str, target_id: str) -> dict:
+        """
+        COC 强娶判定：
+        - 技能值 = 自己羁绊 + 运势/3
+        - 目标羁绊 0~50 → 需常规成功
+        - 目标羁绊 51~80 → 需困难成功
+        - 目标羁绊 81~99 → 需极难成功
+        - 大成功 → 升级为全体强娶
+        - 大失败 → 羁绊 -5
+        """
         profile = self.get_profile(user_id)
         self.ensure_daily_reset(user_id, profile)
 
-        loyalty = profile.get("loyalty", 50)
-        if loyalty < 20:
-            return {"success": False, "blocked": True, "loyalty": loyalty}
+        bond = profile.get("bond", 50)
+        if bond < 20:
+            return {"success": False, "blocked": True, "bond": bond, "reason": "羁绊不足"}
 
         fortune = profile.get("today_fortune") or 0
-        threshold = loyalty + fortune // 4
-        roll = random.randint(1, 100)
-        success = threshold > roll
+        skill = bond + fortune // 3
 
-        if success:
-            profile["loyalty"] = _clamp(loyalty - 5)
-            self.save_profile(user_id, profile)
-            result_loyalty = profile["loyalty"]
+        target_profile = self.get_profile(target_id)
+        target_bond = target_profile.get("bond", 50)
+
+        # 难度等级
+        if target_bond <= 50:
+            required = 3  # 常规成功
+            req_label = "常规成功"
+        elif target_bond <= 80:
+            required = 2  # 困难成功
+            req_label = "困难成功"
         else:
-            result_loyalty = loyalty
+            required = 1  # 极难成功
+            req_label = "极难成功"
+
+        result = self._coc_roll(skill)
+
+        # 判断成功
+        if result["level"] == 0:  # 大成功 → 全体强娶
+            success = True
+            full_success = True
+        elif result["level"] == 5:  # 大失败
+            profile["bond"] = _clamp(bond - 5)
+            self.save_profile(user_id, profile)
+            success = False
+            full_success = False
+        elif result["level"] <= required:  # 达到所需难度
+            success = True
+            full_success = False
+        else:
+            success = False
+            full_success = False
 
         return {
             "success": success,
+            "full_success": full_success,
             "blocked": False,
-            "roll": roll,
-            "threshold": threshold,
-            "loyalty": result_loyalty,
+            "roll": result["roll"],
+            "skill": skill,
+            "level": result["level"],
+            "label": result["label"],
+            "req_label": req_label,
+            "bond": profile.get("bond", 50),
             "fortune": fortune,
+            "target_bond": target_bond,
+            "is_crit_success": result["level"] == 0,
+            "is_crit_fail": result["level"] == 5,
         }
 
     def can_force_marry_all(self, user_id: str) -> dict:
-        """Returns {success, roll, threshold, diff, loyalty}"""
+        """
+        全体强娶：必须大成功 (roll ≤ 5)
+        大失败 → 羁绊 -5
+        """
         profile = self.get_profile(user_id)
         self.ensure_daily_reset(user_id, profile)
 
-        loyalty = profile.get("loyalty", 50)
-        if loyalty < 20:
-            return {"success": False, "blocked": True, "loyalty": loyalty}
+        bond = profile.get("bond", 50)
+        if bond < 20:
+            return {"success": False, "blocked": True, "bond": bond, "reason": "羁绊不足"}
 
         fortune = profile.get("today_fortune") or 0
-        threshold = loyalty + fortune // 4
-        roll = random.randint(1, 100)
-        diff = threshold - roll
-        success = diff > 100
+        skill = bond + fortune // 3
 
-        if success:
-            profile["loyalty"] = _clamp(loyalty - 5)
+        result = self._coc_roll(skill)
+
+        success = result["level"] == 0
+        is_crit_fail = result["level"] == 5
+
+        if is_crit_fail:
+            profile["bond"] = _clamp(bond - 5)
             self.save_profile(user_id, profile)
-            result_loyalty = profile["loyalty"]
-        else:
-            result_loyalty = loyalty
 
         return {
             "success": success,
             "blocked": False,
-            "roll": roll,
-            "threshold": threshold,
-            "diff": diff,
-            "loyalty": result_loyalty,
+            "roll": result["roll"],
+            "skill": skill,
+            "label": result["label"],
+            "bond": profile.get("bond", 50),
             "fortune": fortune,
+            "is_crit_success": success,
+            "is_crit_fail": is_crit_fail,
         }
 
     def update_yesterday_propose(self, user_id: str, target_id: str | None):

@@ -226,7 +226,7 @@ class AutumnBlazePlugin(Star):
             logger.error(f"[autumn_blaze] AI 调用异常: {e}")
         yield event.plain_result(f"✨ {user_name} 签到成功！运势值：{rp}")
 
-    # ==================== 修改运势 ====================
+    # ==================== 修改运势 (COC 骰子系统) ====================
 
     @filter.command("修改运势")
     async def modify_fortune(self, event: AstrMessageEvent):
@@ -242,26 +242,56 @@ class AutumnBlazePlugin(Star):
         if remaining <= 0:
             yield event.plain_result(f"{user_name}，今日的修改运势次数已用完！运势值：{current_rp}")
             return
-        success_prob = (100 - current_rp) / 100.0
-        roll = random.random()
-        roll_pct = int(roll * 100)
-        need = int(success_prob * 100)
-        dice_text = f"D100={roll_pct} (需<{need})"
-        if roll >= success_prob:
-            profile["modifications_left"] = remaining - 1
+
+        # COC 判定：技能值 = 100 - 当前运势（越低越容易改）
+        skill = 100 - current_rp
+        result = self._profile_manager._coc_roll(skill)
+        roll = result["roll"]
+        label = result["label"]
+
+        profile["modifications_left"] = remaining - 1
+        dice_text = f"D100={roll}/{skill} {label}"
+
+        if result["level"] == 0:  # 大成功
+            new_rp = random.randint(95, 99)
+            new_rp = max(current_rp + 1, new_rp)
+            self._profile_manager.set_fortune(user_id, new_rp, modifications=remaining - 1)
+            try:
+                ai_text = await self._ai_reply(event, user_name, new_rp, scene="修改运势")
+                if ai_text:
+                    yield event.plain_result(f"🎲 大成功！{dice_text}\n运势值：{current_rp} → {new_rp}\n{ai_text}")
+                    return
+            except Exception as e:
+                logger.error(f"[autumn_blaze] AI 调用异常: {e}")
+            yield event.plain_result(f"🎲 大成功！{dice_text}\n运势值：{current_rp} → {new_rp}")
+
+        elif result["level"] == 5:  # 大失败
+            floor = max(1, current_rp - 50)
+            new_rp = random.randint(1, max(current_rp, floor))
+            self._profile_manager.set_fortune(user_id, new_rp, modifications=remaining - 1)
+            yield event.plain_result(f"💀 大失败！{dice_text}\n运势值：{current_rp} → {new_rp}")
+
+        elif result["level"] == 1:  # 极难成功
+            bonus = random.randint(15, 30)
+            new_rp = min(99, current_rp + bonus)
+            self._profile_manager.set_fortune(user_id, new_rp, modifications=remaining - 1)
+            yield event.plain_result(f"✨ 极难成功！{dice_text}\n运势值：{current_rp} → {new_rp} (+{bonus})")
+
+        elif result["level"] == 2:  # 困难成功
+            bonus = random.randint(8, 15)
+            new_rp = min(99, current_rp + bonus)
+            self._profile_manager.set_fortune(user_id, new_rp, modifications=remaining - 1)
+            yield event.plain_result(f"🌟 困难成功！{dice_text}\n运势值：{current_rp} → {new_rp} (+{bonus})")
+
+        elif result["level"] == 3:  # 常规成功
+            bonus = random.randint(1, 8)
+            new_rp = min(99, current_rp + bonus)
+            self._profile_manager.set_fortune(user_id, new_rp, modifications=remaining - 1)
+            yield event.plain_result(f"🌸 常规成功！{dice_text}\n运势值：{current_rp} → {new_rp} (+{bonus})")
+
+        else:  # 失败
             self._profile_manager.save_profile(user_id, profile)
             yield event.plain_result(f"没能改变命运。{dice_text}")
-            return
-        new_rp = random.randint(current_rp + 1, 100)
-        self._profile_manager.set_fortune(user_id, new_rp, modifications=remaining - 1)
-        try:
-            ai_text = await self._ai_reply(event, user_name, new_rp, scene="修改运势")
-            if ai_text:
-                yield event.plain_result(f"✨ {user_name} 成功改变命运！{dice_text}\n运势值：{current_rp} → {new_rp}\n{ai_text}")
-                return
-        except Exception as e:
-            logger.error(f"[autumn_blaze] AI 调用异常: {e}")
-        yield event.plain_result(f"✨ {user_name} 成功改变命运！{dice_text}\n运势值：{current_rp} → {new_rp}")
 
     # ==================== 抽老婆 ====================
 
@@ -434,7 +464,7 @@ class AutumnBlazePlugin(Star):
         res.append(f"\n剩余次数：{max(0, daily_limit - len(user_recs))}次")
         yield event.plain_result("\n".join(res))
 
-    # ==================== 强娶 ====================
+    # ==================== 强娶 (COC 骰子系统) ====================
 
     @filter.command("强娶", alias={"qiangqu"})
     async def force_marry(self, event: AstrMessageEvent):
@@ -455,17 +485,43 @@ class AutumnBlazePlugin(Star):
         if not is_allowed_group(group_id, self.config):
             yield event.plain_result("此功能在当前群聊不可用。")
             return
+
+        # 每日强娶次数限制（与抽老婆共用 daily_limit）
+        daily_limit = self.config.get("daily_limit", 1)
+        profile = self._profile_manager.get_profile(user_id)
+        self._profile_manager.ensure_daily_reset(user_id, profile)
+        force_count = profile.get("force_marry_count_today", 0)
+        if force_count >= daily_limit:
+            yield event.plain_result(f"今日强娶次数已用完 ({force_count}/{daily_limit})。")
+            return
+
         target_id = extract_target_id_from_message(event)
         is_all_target = (not target_id or target_id == "all")
+
         if target_id == user_id:
             yield event.plain_result("不能娶自己！")
             return
+
         force_excluded = self._force_marry_excluded_users()
         if not self.config.get("allow_marry_bot", False):
             force_excluded.add(bot_id)
         force_excluded.add("0")
 
+        # ---- 全体强娶 ----
         if is_all_target:
+            result = self._profile_manager.can_force_marry_all(user_id)
+            if result.get("blocked"):
+                yield event.plain_result("羁绊不足，无法进行全体强娶。")
+                return
+            dice_text = f"D100={result['roll']}/5 {result['label']}"
+            if not result["success"]:
+                if result.get("is_crit_fail"):
+                    yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
+                    return
+                yield event.plain_result(f"全体强娶失败！{dice_text}")
+                return
+
+            # 全体强娶成功（大成功）
             self._cleanup_inactive(group_id)
             members = []
             current_member_ids = []
@@ -476,8 +532,8 @@ class AutumnBlazePlugin(Star):
                     if isinstance(members, dict) and "data" in members and isinstance(members["data"], list):
                         members = members["data"]
                     current_member_ids = [str(m.get("user_id")) for m in members]
-            except Exception as e:
-                logger.warning(f"[autumn_blaze] 获取群成员列表失败: {e}")
+            except Exception:
+                pass
             active_pool = self.active_users.get(group_id, {})
             if current_member_ids:
                 pool = [uid for uid in active_pool if uid not in force_excluded and uid in current_member_ids and uid != user_id]
@@ -485,14 +541,6 @@ class AutumnBlazePlugin(Star):
                 pool = [uid for uid in active_pool if uid not in force_excluded and uid != user_id]
             if not pool:
                 yield event.plain_result("老婆池为空，无法进行全体强娶。")
-                return
-            result = self._profile_manager.can_force_marry_all(user_id)
-            if result["blocked"]:
-                yield event.plain_result("你的运势和境遇尚不足以进行全体强娶。再试试吧~")
-                return
-            dice_text = f"D100={result['roll']} | {result['threshold']}-{result['roll']}={result['diff']} (需>100)"
-            if not result["success"]:
-                yield event.plain_result(f"全体强娶失败！{dice_text}\n再试试吧~")
                 return
             for t_id in pool:
                 self._get_profile(t_id)
@@ -509,27 +557,94 @@ class AutumnBlazePlugin(Star):
                 group_records.append({"user_id": user_id, "wife_id": t_id, "wife_name": t_name, "timestamp": timestamp, "forced": True, "forced_all": True})
                 maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
             save_json(self.records_file, self.records)
-            text = f" 全体强娶成功！{dice_text}\n后宫+{len(pool)}位群友~\n"
+            profile["force_marry_count_today"] = force_count + 1
+            self._profile_manager.save_profile(user_id, profile)
+            text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{len(pool)}位群友~"
             if self._can_onebot_withdraw(event):
                 message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}])
-                if message_id is not None:
-                    self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
+                if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
                 return
             yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text)])
             return
 
+        # ---- 个人强娶 ----
         if target_id in force_excluded:
             yield event.plain_result("该用户在强娶排除列表中，无法被强娶。")
             return
+
         self._get_profile(target_id)
-        result = self._profile_manager.can_force_marry(user_id)
-        if result["blocked"]:
-            yield event.plain_result("你的运势和境遇尚不足以强娶他人。再试试吧~")
+        result = self._profile_manager.can_force_marry(user_id, target_id)
+        if result.get("blocked"):
+            yield event.plain_result("羁绊不足，无法强娶。")
             return
-        dice_text = f"D100={result['roll']} (需<{result['threshold']})"
+
+        roll = result["roll"]
+        skill = result["skill"]
+        label = result["label"]
+        req = result["req_label"]
+        target_bond = result["target_bond"]
+        dice_text = f"D100={roll}/{skill} {label} (需{req})"
+
+        # 大失败
+        if result.get("is_crit_fail"):
+            profile["force_marry_count_today"] = force_count + 1
+            self._profile_manager.save_profile(user_id, profile)
+            yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
+            return
+
         if not result["success"]:
-            yield event.plain_result(f"强娶失败！{dice_text}\n再试试吧~")
+            yield event.plain_result(f"强娶失败！{dice_text}\n目标羁绊 {target_bond}，需要 {req}")
             return
+
+        # 成功 — 判断是否大成功升级为全体
+        if result.get("is_crit_success") and result["full_success"]:
+            # 大成功：升级为全体强娶
+            self._cleanup_inactive(group_id)
+            members = []
+            current_member_ids = []
+            try:
+                if event.get_platform_name() == "aiocqhttp":
+                    assert isinstance(event, AiocqhttpMessageEvent)
+                    members = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
+                    if isinstance(members, dict) and "data" in members and isinstance(members["data"], list):
+                        members = members["data"]
+                    current_member_ids = [str(m.get("user_id")) for m in members]
+            except Exception:
+                pass
+            active_pool = self.active_users.get(group_id, {})
+            if current_member_ids:
+                pool = [uid for uid in active_pool if uid not in force_excluded and uid in current_member_ids and uid != user_id]
+            else:
+                pool = [uid for uid in active_pool if uid not in force_excluded and uid != user_id]
+            if not pool:
+                yield event.plain_result("大成功触发了全体强娶，但老婆池为空。")
+                return
+            for t_id in pool:
+                self._get_profile(t_id)
+            user_name = event.get_sender_name() or f"用户({user_id})"
+            if members:
+                user_name = resolve_member_name(members, user_id=user_id, fallback=user_name)
+            group_records = self._get_group_records(group_id)
+            group_records[:] = [r for r in group_records if r["user_id"] != user_id]
+            timestamp = datetime.now().isoformat()
+            for t_id in pool:
+                t_name = f"用户({t_id})"
+                if members:
+                    t_name = resolve_member_name(members, user_id=t_id, fallback=t_name)
+                group_records.append({"user_id": user_id, "wife_id": t_id, "wife_name": t_name, "timestamp": timestamp, "forced": True, "forced_all": True})
+                maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
+            save_json(self.records_file, self.records)
+            profile["force_marry_count_today"] = force_count + 1
+            self._profile_manager.save_profile(user_id, profile)
+            text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{len(pool)}位群友~"
+            if self._can_onebot_withdraw(event):
+                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}])
+                if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
+                return
+            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text)])
+            return
+
+        # 普通个人强娶成功
         target_name = f"用户({target_id})"
         user_name = event.get_sender_name() or f"用户({user_id})"
         members = []
@@ -549,12 +664,13 @@ class AutumnBlazePlugin(Star):
         group_records.append({"user_id": user_id, "wife_id": target_id, "wife_name": target_name, "timestamp": timestamp, "forced": True})
         maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=target_id, wife_name=target_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
         save_json(self.records_file, self.records)
+        profile["force_marry_count_today"] = force_count + 1
+        self._profile_manager.save_profile(user_id, profile)
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={target_id}&spec=640"
-        text = f" 强娶成功！{dice_text}\n娶到了【{target_name}】！请对她好一点哦~\n"
+        text = f"强娶成功！{dice_text}\n娶到了【{target_name}】！"
         if self._can_onebot_withdraw(event):
             message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": avatar_url}}])
-            if message_id is not None:
-                self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
+            if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
             return
         yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromURL(avatar_url)])
 
@@ -640,11 +756,11 @@ class AutumnBlazePlugin(Star):
             "===== 秋焰插件 帮助 =====\n"
             "── 签到运势 ──\n"
             f"1. 【签到】/【今日运势】/【jrrp】：生成每日运势值\n"
-            f"2. 【修改运势】：尝试改变运势（每日{max_modify}次）\n"
+            f"2. 【修改运势】：COC骰子判定重投运势（每日{max_modify}次）\n"
             "── 抽老婆 ──\n"
-            "3. 【抽老婆】/【今日老婆】：随机抽取今日老婆\n"
-            "4. 【强娶 @某人】：强行更换今日老婆（无冷却）\n"
-            "5. 【强娶】：不@任何人可全体强娶（判定更严格）\n"
+            f"3. 【抽老婆】/【今日老婆】：随机抽取今日老婆（每日{daily_limit}次）\n"
+            f"4. 【强娶 @某人】：COC强娶判定（每日{daily_limit}次）\n"
+            "5. 【强娶】：不@任何人可全体强娶（必须大成功）\n"
             "6. 【我的老婆】：查看今日历史与次数\n"
             "7. 【关系图】：查看群友老婆关系图\n"
             "8. 【求婚 @某人】：向对方发起求婚\n"
@@ -652,7 +768,7 @@ class AutumnBlazePlugin(Star):
             "10. 【重置记录】：(管理员) 清空数据\n"
             "11. 【重置强娶时间】：(管理员) 重置强娶冷却\n"
             f"── 设置 ──\n"
-            f"当前每日抽取上限：{daily_limit}次\n"
+            f"当前每日上限：{daily_limit}次\n"
         )
         yield event.plain_result(help_text)
 
