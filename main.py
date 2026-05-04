@@ -515,6 +515,8 @@ class AutumnBlazePlugin(Star):
                 return
             dice_text = f"D100={result['roll']}/{result['skill']} {result['label']} (需大成功)"
             if not result["success"]:
+                profile["force_marry_count_today"] = force_count + 1
+                self._profile_manager.save_profile(user_id, profile)
                 if result.get("is_crit_fail"):
                     yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
                     return
@@ -593,6 +595,8 @@ class AutumnBlazePlugin(Star):
             return
 
         if not result["success"]:
+            profile["force_marry_count_today"] = force_count + 1
+            self._profile_manager.save_profile(user_id, profile)
             yield event.plain_result(f"强娶失败！{dice_text}\n目标羁绊 {target_bond}，需要 {req}")
             return
 
