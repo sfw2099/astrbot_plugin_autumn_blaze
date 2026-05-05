@@ -17,6 +17,18 @@
         "hint": "每位用户每天可以抽取老婆的次数上限。",
         "default": 1
     },
+    "force_marry_limit": {
+        "type": "int",
+        "description": "每日强娶次数上限",
+        "hint": "每位用户每天可以强娶的最大次数。",
+        "default": 1
+    },
+    "sever_ties_limit": {
+        "type": "int",
+        "description": "每日斩红尘次数上限",
+        "hint": "每位用户每天可以斩红尘的最大次数。",
+        "default": 1
+    },
     "max_records": {
         "type": "int",
         "description": "活跃群友记录上限",

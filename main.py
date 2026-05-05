@@ -487,19 +487,15 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result("此功能在当前群聊不可用。")
             return
 
-        # 每日强娶次数限制（每个群独立计算）
-        daily_limit = self.config.get("daily_limit", 1)
+        # 每日强娶次数限制（records 计数，与抽老婆同模式）
+        force_marry_limit = self.config.get("force_marry_limit", 1)
         profile = self._profile_manager.get_profile(user_id)
         self._profile_manager.ensure_daily_reset(user_id, profile)
-        gf_all = profile.setdefault("group_force_marry", {})
-        gf_data = gf_all.setdefault(group_id, {"count": 0, "date": ""})
-        today = datetime.now().strftime("%Y%m%d")
-        if gf_data.get("date") != today:
-            gf_data["count"] = 0
-            gf_data["date"] = today
-        force_count = gf_data["count"]
-        if force_count >= daily_limit:
-            yield event.plain_result(f"今日强娶次数已用完 ({force_count}/{daily_limit})。")
+        group_records = self._get_group_records(group_id)
+        force_recs = [r for r in group_records if r["user_id"] == user_id and r.get("type") == "force_marry"]
+        force_count = len(force_recs)
+        if force_count >= force_marry_limit:
+            yield event.plain_result(f"今日强娶次数已用完 ({force_count}/{force_marry_limit})。")
             return
 
         target_id = extract_target_id_from_message(event)
@@ -522,8 +518,8 @@ class AutumnBlazePlugin(Star):
                 return
             dice_text = f"D100={result['roll']}/{result['skill']} {result['label']} (需大成功)"
             if not result["success"]:
-                gf_data["count"] = force_count + 1
-                self._profile_manager.save_profile(user_id, profile)
+                group_records.append({"user_id": user_id, "type": "force_marry", "success": False, "timestamp": datetime.now().isoformat()})
+                save_json(self.records_file, self.records)
                 if result.get("is_crit_fail"):
                     yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
                     return
@@ -565,9 +561,8 @@ class AutumnBlazePlugin(Star):
                     t_name = resolve_member_name(members, user_id=t_id, fallback=t_name)
                 group_records.append({"user_id": user_id, "wife_id": t_id, "wife_name": t_name, "timestamp": timestamp, "forced": True, "forced_all": True})
                 maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
+            group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
             save_json(self.records_file, self.records)
-            gf_data["count"] = force_count + 1
-            self._profile_manager.save_profile(user_id, profile)
             text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{len(pool)}位群友~"
             if self._can_onebot_withdraw(event):
                 message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}])
@@ -596,14 +591,14 @@ class AutumnBlazePlugin(Star):
 
         # 大失败
         if result.get("is_crit_fail"):
-            gf_data["count"] = force_count + 1
-            self._profile_manager.save_profile(user_id, profile)
+            group_records.append({"user_id": user_id, "type": "force_marry", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self.records_file, self.records)
             yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
             return
 
         if not result["success"]:
-            gf_data["count"] = force_count + 1
-            self._profile_manager.save_profile(user_id, profile)
+            group_records.append({"user_id": user_id, "type": "force_marry", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self.records_file, self.records)
             yield event.plain_result(f"强娶失败！{dice_text}\n目标羁绊 {target_bond}，需要 {req}")
             return
 
@@ -644,9 +639,8 @@ class AutumnBlazePlugin(Star):
                     t_name = resolve_member_name(members, user_id=t_id, fallback=t_name)
                 group_records.append({"user_id": user_id, "wife_id": t_id, "wife_name": t_name, "timestamp": timestamp, "forced": True, "forced_all": True})
                 maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
+            group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
             save_json(self.records_file, self.records)
-            gf_data["count"] = force_count + 1
-            self._profile_manager.save_profile(user_id, profile)
             text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{len(pool)}位群友~"
             if self._can_onebot_withdraw(event):
                 message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}])
@@ -674,9 +668,8 @@ class AutumnBlazePlugin(Star):
         timestamp = datetime.now().isoformat()
         group_records.append({"user_id": user_id, "wife_id": target_id, "wife_name": target_name, "timestamp": timestamp, "forced": True})
         maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=target_id, wife_name=target_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
+        group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
         save_json(self.records_file, self.records)
-        gf_data["count"] = force_count + 1
-        self._profile_manager.save_profile(user_id, profile)
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={target_id}&spec=640"
         text = f"强娶成功！{dice_text}\n娶到了【{target_name}】！"
         if self._can_onebot_withdraw(event):
@@ -706,19 +699,15 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result("此功能在当前群聊不可用。")
             return
 
-        daily_limit = self.config.get("daily_limit", 1)
+        sever_ties_limit = self.config.get("sever_ties_limit", 1)
         profile = self._profile_manager.get_profile(user_id)
         self._profile_manager.ensure_daily_reset(user_id, profile)
 
-        st_all = profile.setdefault("group_sever_ties", {})
-        st_data = st_all.setdefault(group_id, {"count": 0, "date": ""})
-        today = datetime.now().strftime("%Y%m%d")
-        if st_data.get("date") != today:
-            st_data["count"] = 0
-            st_data["date"] = today
-        sever_count = st_data["count"]
-        if sever_count >= daily_limit:
-            yield event.plain_result(f"今日斩红尘次数已用完 ({sever_count}/{daily_limit})。")
+        group_records = self._get_group_records(group_id)
+        sever_recs = [r for r in group_records if r["user_id"] == user_id and r.get("type") == "sever_ties"]
+        sever_count = len(sever_recs)
+        if sever_count >= sever_ties_limit:
+            yield event.plain_result(f"今日斩红尘次数已用完 ({sever_count}/{sever_ties_limit})。")
             return
 
         target_id = extract_target_id_from_message(event)
@@ -735,12 +724,12 @@ class AutumnBlazePlugin(Star):
 
         group_records = self._get_group_records(group_id)
         target_uid = target_id if has_target else user_id
-        target_recs = [r for r in group_records if r["user_id"] == target_uid]
+        target_recs = [r for r in group_records if r["user_id"] == target_uid and "type" not in r]
 
         if not target_recs:
             count_msg = f"你今日没有任何红尘羁绊可斩。" if not has_target else f"用户({target_uid})今日没有任何红尘羁绊可斩。"
-            st_data["count"] = sever_count + 1
-            self._profile_manager.save_profile(user_id, profile)
+            group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
+            save_json(self.records_file, self.records)
             yield event.plain_result(count_msg)
             return
 
@@ -756,23 +745,22 @@ class AutumnBlazePlugin(Star):
         user_name = event.get_sender_name() or f"用户({user_id})"
 
         if result.get("is_crit_fail"):
-            st_data["count"] = sever_count + 1
-            self._profile_manager.save_profile(user_id, profile)
+            group_records.append({"user_id": user_id, "type": "sever_ties", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self.records_file, self.records)
             yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
             return
 
         if not result["success"]:
-            st_data["count"] = sever_count + 1
-            self._profile_manager.save_profile(user_id, profile)
+            group_records.append({"user_id": user_id, "type": "sever_ties", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self.records_file, self.records)
             yield event.plain_result(f"斩红尘失败！{dice_text}\n红尘羁绊，岂是轻易可斩……")
             return
 
         if result.get("is_crit_success") and result["full_success"]:
-            n = len(group_records)
-            group_records.clear()
+            n = len([r for r in group_records if "type" not in r])
+            group_records[:] = [r for r in group_records if "type" in r]
+            group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
             save_json(self.records_file, self.records)
-            st_data["count"] = sever_count + 1
-            self._profile_manager.save_profile(user_id, profile)
             yield event.plain_result(f"🌟 大成功！{dice_text}\n{user_name} 一剑斩断全群红尘！已清除本群所有羁绊连线（共 {n} 条）。")
             return
 
@@ -787,18 +775,16 @@ class AutumnBlazePlugin(Star):
             except Exception:
                 pass
             n = len(target_recs)
-            group_records[:] = [r for r in group_records if r["user_id"] != target_uid]
+            group_records[:] = [r for r in group_records if r["user_id"] != target_uid or "type" in r]
+            group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
             save_json(self.records_file, self.records)
-            st_data["count"] = sever_count + 1
-            self._profile_manager.save_profile(user_id, profile)
             yield event.plain_result(f"⚔️ {user_name} 挥剑斩断 {target_name} 的红尘！{dice_text}\n已清除 {target_name} 今日所有羁绊连线（共 {n} 条）。")
             return
 
         n = len(target_recs)
-        group_records[:] = [r for r in group_records if r["user_id"] != user_id]
+        group_records[:] = [r for r in group_records if r["user_id"] != user_id or "type" in r]
+        group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
         save_json(self.records_file, self.records)
-        st_data["count"] = sever_count + 1
-        self._profile_manager.save_profile(user_id, profile)
         yield event.plain_result(f"⚔️ {user_name} 斩断红尘！{dice_text}\n已清除你今日所有羁绊连线（共 {n} 条）。")
 
     # ==================== 关系图 ====================
@@ -879,6 +865,8 @@ class AutumnBlazePlugin(Star):
             return
         daily_limit = self.config.get("daily_limit", 3)
         max_modify = self.config.get("max_modify_attempts", 1)
+        force_marry_limit = self.config.get("force_marry_limit", 1)
+        sever_ties_limit = self.config.get("sever_ties_limit", 1)
         help_text = (
             "===== 秋焰插件 帮助 =====\n"
             "── 签到运势 ──\n"
@@ -886,9 +874,9 @@ class AutumnBlazePlugin(Star):
             f"2. 【修改运势】：COC骰子判定重投运势（每日{max_modify}次）\n"
             "── 抽老婆 ──\n"
             f"3. 【抽老婆】/【今日老婆】：随机抽取今日老婆（每日{daily_limit}次）\n"
-            f"4. 【强娶 @某人】：COC强娶判定（每日{daily_limit}次）\n"
+            f"4. 【强娶 @某人】：COC强娶判定（每日{force_marry_limit}次）\n"
             "5. 【强娶】：不@任何人可全体强娶（必须大成功）\n"
-            "6. 【斩红尘】：COC判定斩断羁绊连线（每日{daily_limit}次）\n"
+            f"6. 【斩红尘】：COC判定斩断羁绊连线（每日{sever_ties_limit}次）\n"
             "    【斩红尘 @某人】：斩断指定用户的连线\n"
             "7. 【我的老婆】：查看今日历史与次数\n"
             "8. 【关系图】：查看群友老婆关系图\n"

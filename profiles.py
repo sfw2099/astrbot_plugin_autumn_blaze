@@ -20,8 +20,6 @@ DEFAULT_PROFILE = {
     "wife_draw_count_today": 0,
     "draw_date": "",
     "last_propose_date": "",
-    "group_force_marry": {},
-    "group_sever_ties": {},
 }
 
 
@@ -87,10 +85,6 @@ class ProfileManager:
             profile["wife_draw_count_today"] = 0
             profile["draw_date"] = today
             changed = True
-
-        # 清理旧版全局强娶字段（迁移到 group_force_marry）
-        for old_key in ("force_marry_count_today", "force_marry_date"):
-            profile.pop(old_key, None)
 
         if profile.get("last_propose_date") != today:
             profile["proposed_today"] = False
