@@ -486,11 +486,17 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result("此功能在当前群聊不可用。")
             return
 
-        # 每日强娶次数限制（与抽老婆共用 daily_limit）
+        # 每日强娶次数限制（每个群独立计算）
         daily_limit = self.config.get("daily_limit", 1)
         profile = self._profile_manager.get_profile(user_id)
         self._profile_manager.ensure_daily_reset(user_id, profile)
-        force_count = profile.get("force_marry_count_today", 0)
+        gf_all = profile.setdefault("group_force_marry", {})
+        gf_data = gf_all.setdefault(group_id, {"count": 0, "date": ""})
+        today = datetime.now().strftime("%Y%m%d")
+        if gf_data.get("date") != today:
+            gf_data["count"] = 0
+            gf_data["date"] = today
+        force_count = gf_data["count"]
         if force_count >= daily_limit:
             yield event.plain_result(f"今日强娶次数已用完 ({force_count}/{daily_limit})。")
             return
@@ -515,7 +521,7 @@ class AutumnBlazePlugin(Star):
                 return
             dice_text = f"D100={result['roll']}/{result['skill']} {result['label']} (需大成功)"
             if not result["success"]:
-                profile["force_marry_count_today"] = force_count + 1
+                gf_data["count"] = force_count + 1
                 self._profile_manager.save_profile(user_id, profile)
                 if result.get("is_crit_fail"):
                     yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
@@ -559,7 +565,7 @@ class AutumnBlazePlugin(Star):
                 group_records.append({"user_id": user_id, "wife_id": t_id, "wife_name": t_name, "timestamp": timestamp, "forced": True, "forced_all": True})
                 maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
             save_json(self.records_file, self.records)
-            profile["force_marry_count_today"] = force_count + 1
+            gf_data["count"] = force_count + 1
             self._profile_manager.save_profile(user_id, profile)
             text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{len(pool)}位群友~"
             if self._can_onebot_withdraw(event):
@@ -589,13 +595,13 @@ class AutumnBlazePlugin(Star):
 
         # 大失败
         if result.get("is_crit_fail"):
-            profile["force_marry_count_today"] = force_count + 1
+            gf_data["count"] = force_count + 1
             self._profile_manager.save_profile(user_id, profile)
             yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
             return
 
         if not result["success"]:
-            profile["force_marry_count_today"] = force_count + 1
+            gf_data["count"] = force_count + 1
             self._profile_manager.save_profile(user_id, profile)
             yield event.plain_result(f"强娶失败！{dice_text}\n目标羁绊 {target_bond}，需要 {req}")
             return
@@ -638,7 +644,7 @@ class AutumnBlazePlugin(Star):
                 group_records.append({"user_id": user_id, "wife_id": t_id, "wife_name": t_name, "timestamp": timestamp, "forced": True, "forced_all": True})
                 maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
             save_json(self.records_file, self.records)
-            profile["force_marry_count_today"] = force_count + 1
+            gf_data["count"] = force_count + 1
             self._profile_manager.save_profile(user_id, profile)
             text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{len(pool)}位群友~"
             if self._can_onebot_withdraw(event):
@@ -668,7 +674,7 @@ class AutumnBlazePlugin(Star):
         group_records.append({"user_id": user_id, "wife_id": target_id, "wife_name": target_name, "timestamp": timestamp, "forced": True})
         maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=target_id, wife_name=target_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
         save_json(self.records_file, self.records)
-        profile["force_marry_count_today"] = force_count + 1
+        gf_data["count"] = force_count + 1
         self._profile_manager.save_profile(user_id, profile)
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={target_id}&spec=640"
         text = f"强娶成功！{dice_text}\n娶到了【{target_name}】！"
