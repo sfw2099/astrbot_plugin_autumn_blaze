@@ -736,7 +736,7 @@ class AutumnBlazePlugin(Star):
 
         group_records = self._get_group_records(group_id)
         target_uid = target_id if has_target else user_id
-        target_recs = [r for r in group_records if r["user_id"] == target_uid and "type" not in r]
+        target_recs = [r for r in group_records if (r["user_id"] == target_uid or r.get("wife_id") == target_uid) and "type" not in r]
 
         if not target_recs:
             count_msg = f"你今日没有任何红尘羁绊可斩。" if not has_target else f"用户({target_uid})今日没有任何红尘羁绊可斩。"
@@ -787,14 +787,14 @@ class AutumnBlazePlugin(Star):
             except Exception:
                 pass
             n = len(target_recs)
-            group_records[:] = [r for r in group_records if r["user_id"] != target_uid or "type" in r]
+            group_records[:] = [r for r in group_records if (r["user_id"] != target_uid and r.get("wife_id") != target_uid) or "type" in r]
             group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
             save_json(self.records_file, self.records)
             yield event.plain_result(f"⚔️ {user_name} 挥剑斩断 {target_name} 的红尘！{dice_text}\n已清除 {target_name} 今日所有羁绊连线（共 {n} 条）。")
             return
 
         n = len(target_recs)
-        group_records[:] = [r for r in group_records if r["user_id"] != user_id or "type" in r]
+        group_records[:] = [r for r in group_records if (r["user_id"] != user_id and r.get("wife_id") != user_id) or "type" in r]
         group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
         save_json(self.records_file, self.records)
         yield event.plain_result(f"⚔️ {user_name} 斩断红尘！{dice_text}\n已清除你今日所有羁绊连线（共 {n} 条）。")
