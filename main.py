@@ -80,6 +80,7 @@ class AutumnBlazePlugin(Star):
             "reset_records": self._cmd_reset_records,
             "reset_force_cd": self._cmd_reset_force_cd,
             "propose_command": self.propose_command,
+            "sever_ties": self._cmd_sever_ties,
         }
         self._keyword_trigger_block_prefixes = ("/", "!", "！")
         logger.info(f"秋焰插件已加载。数据目录: {self.data_dir}")
@@ -684,6 +685,122 @@ class AutumnBlazePlugin(Star):
             return
         yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromURL(avatar_url)])
 
+    # ==================== 斩红尘 ====================
+
+    @filter.command("斩红尘", alias={"zch"})
+    async def sever_ties(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_sever_ties(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 斩红尘异常: {e}", exc_info=True)
+            yield event.plain_result(f"斩红尘出错了：{e}")
+
+    async def _cmd_sever_ties(self, event: AstrMessageEvent):
+        if event.is_private_chat():
+            yield event.plain_result("此功能仅在群聊中可用哦~")
+            return
+        user_id = str(event.get_sender_id())
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+
+        daily_limit = self.config.get("daily_limit", 1)
+        profile = self._profile_manager.get_profile(user_id)
+        self._profile_manager.ensure_daily_reset(user_id, profile)
+
+        st_all = profile.setdefault("group_sever_ties", {})
+        st_data = st_all.setdefault(group_id, {"count": 0, "date": ""})
+        today = datetime.now().strftime("%Y%m%d")
+        if st_data.get("date") != today:
+            st_data["count"] = 0
+            st_data["date"] = today
+        sever_count = st_data["count"]
+        if sever_count >= daily_limit:
+            yield event.plain_result(f"今日斩红尘次数已用完 ({sever_count}/{daily_limit})。")
+            return
+
+        target_id = extract_target_id_from_message(event)
+        if target_id and target_id == user_id:
+            target_id = None
+
+        has_target = target_id is not None
+
+        if has_target:
+            cq_at = [c for c in event.message_obj.message if isinstance(c, Comp.At)]
+            if len(cq_at) > 1:
+                yield event.plain_result("一次只能为一个人斩红尘哦~")
+                return
+
+        group_records = self._get_group_records(group_id)
+        target_uid = target_id if has_target else user_id
+        target_recs = [r for r in group_records if r["user_id"] == target_uid]
+
+        if not target_recs:
+            count_msg = f"你今日没有任何红尘羁绊可斩。" if not has_target else f"用户({target_uid})今日没有任何红尘羁绊可斩。"
+            st_data["count"] = sever_count + 1
+            self._profile_manager.save_profile(user_id, profile)
+            yield event.plain_result(count_msg)
+            return
+
+        if has_target:
+            self._get_profile(target_uid)
+
+        result = self._profile_manager.can_sever_ties(user_id, profile)
+        if result.get("blocked"):
+            yield event.plain_result("羁绊不足，无法斩红尘。")
+            return
+
+        dice_text = f"D100={result['roll']}/{result['skill']} {result['label']} (需困难成功)"
+        user_name = event.get_sender_name() or f"用户({user_id})"
+
+        if result.get("is_crit_fail"):
+            st_data["count"] = sever_count + 1
+            self._profile_manager.save_profile(user_id, profile)
+            yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
+            return
+
+        if not result["success"]:
+            st_data["count"] = sever_count + 1
+            self._profile_manager.save_profile(user_id, profile)
+            yield event.plain_result(f"斩红尘失败！{dice_text}\n红尘羁绊，岂是轻易可斩……")
+            return
+
+        if result.get("is_crit_success") and result["full_success"]:
+            n = len(group_records)
+            group_records.clear()
+            save_json(self.records_file, self.records)
+            st_data["count"] = sever_count + 1
+            self._profile_manager.save_profile(user_id, profile)
+            yield event.plain_result(f"🌟 大成功！{dice_text}\n{user_name} 一剑斩断全群红尘！已清除本群所有羁绊连线（共 {n} 条）。")
+            return
+
+        if has_target:
+            target_name = f"用户({target_uid})"
+            try:
+                if event.get_platform_name() == "aiocqhttp":
+                    members = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
+                    if isinstance(members, dict) and "data" in members:
+                        members = members["data"]
+                    target_name = resolve_member_name(members, user_id=target_uid, fallback=target_name)
+            except Exception:
+                pass
+            n = len(target_recs)
+            group_records[:] = [r for r in group_records if r["user_id"] != target_uid]
+            save_json(self.records_file, self.records)
+            st_data["count"] = sever_count + 1
+            self._profile_manager.save_profile(user_id, profile)
+            yield event.plain_result(f"⚔️ {user_name} 挥剑斩断 {target_name} 的红尘！{dice_text}\n已清除 {target_name} 今日所有羁绊连线（共 {n} 条）。")
+            return
+
+        n = len(target_recs)
+        group_records[:] = [r for r in group_records if r["user_id"] != user_id]
+        save_json(self.records_file, self.records)
+        st_data["count"] = sever_count + 1
+        self._profile_manager.save_profile(user_id, profile)
+        yield event.plain_result(f"⚔️ {user_name} 斩断红尘！{dice_text}\n已清除你今日所有羁绊连线（共 {n} 条）。")
+
     # ==================== 关系图 ====================
 
     @filter.command("关系图", alias={"gxt"})
@@ -771,12 +888,14 @@ class AutumnBlazePlugin(Star):
             f"3. 【抽老婆】/【今日老婆】：随机抽取今日老婆（每日{daily_limit}次）\n"
             f"4. 【强娶 @某人】：COC强娶判定（每日{daily_limit}次）\n"
             "5. 【强娶】：不@任何人可全体强娶（必须大成功）\n"
-            "6. 【我的老婆】：查看今日历史与次数\n"
-            "7. 【关系图】：查看群友老婆关系图\n"
-            "8. 【求婚 @某人】：向对方发起求婚\n"
-            "9. 【求婚】：不@任何人可向全体发起求婚\n"
-            "10. 【重置记录】：(管理员) 清空数据\n"
-            "11. 【重置强娶时间】：(管理员) 重置强娶冷却\n"
+            "6. 【斩红尘】：COC判定斩断羁绊连线（每日{daily_limit}次）\n"
+            "    【斩红尘 @某人】：斩断指定用户的连线\n"
+            "7. 【我的老婆】：查看今日历史与次数\n"
+            "8. 【关系图】：查看群友老婆关系图\n"
+            "9. 【求婚 @某人】：向对方发起求婚\n"
+            "10. 【求婚】：不@任何人可向全体发起求婚\n"
+            "11. 【重置记录】：(管理员) 清空数据\n"
+            "12. 【重置强娶时间】：(管理员) 重置强娶冷却\n"
             f"── 设置 ──\n"
             f"当前每日上限：{daily_limit}次\n"
         )

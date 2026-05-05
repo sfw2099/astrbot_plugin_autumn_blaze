@@ -21,6 +21,7 @@ DEFAULT_PROFILE = {
     "draw_date": "",
     "last_propose_date": "",
     "group_force_marry": {},
+    "group_sever_ties": {},
 }
 
 
@@ -273,6 +274,76 @@ class ProfileManager:
         全体强娶：必须大成功 (roll ≤ 5)
         大失败 → 羁绊 -5
         """
+        bond = profile.get("bond", 50)
+        if bond < 20:
+            return {"success": False, "blocked": True, "bond": bond, "reason": "羁绊不足"}
+
+        fortune = profile.get("today_fortune") or 0
+        skill = bond + fortune // 3
+
+        result = self._coc_roll(skill)
+
+        success = result["level"] == 0
+        is_crit_fail = result["level"] == 5
+
+        if is_crit_fail:
+            profile["bond"] = _clamp(bond - 5)
+            self.save_profile(user_id, profile)
+
+        return {
+            "success": success,
+            "blocked": False,
+            "roll": result["roll"],
+            "skill": skill,
+            "label": result["label"],
+            "bond": profile.get("bond", 50),
+            "fortune": fortune,
+            "is_crit_success": success,
+            "is_crit_fail": is_crit_fail,
+        }
+
+    # ============ 斩红尘判定 ============
+
+    def can_sever_ties(self, user_id: str, profile: dict) -> dict:
+        bond = profile.get("bond", 50)
+        if bond < 20:
+            return {"success": False, "blocked": True, "bond": bond, "reason": "羁绊不足"}
+
+        fortune = profile.get("today_fortune") or 0
+        skill = bond + fortune // 3
+
+        result = self._coc_roll(skill)
+
+        if result["level"] == 0:
+            success = True
+            full_success = True
+        elif result["level"] == 5:
+            profile["bond"] = _clamp(bond - 5)
+            self.save_profile(user_id, profile)
+            success = False
+            full_success = False
+        elif result["level"] <= 2:
+            success = True
+            full_success = False
+        else:
+            success = False
+            full_success = False
+
+        return {
+            "success": success,
+            "full_success": full_success,
+            "blocked": False,
+            "roll": result["roll"],
+            "skill": skill,
+            "level": result["level"],
+            "label": result["label"],
+            "bond": profile.get("bond", 50),
+            "fortune": fortune,
+            "is_crit_success": result["level"] == 0,
+            "is_crit_fail": result["level"] == 5,
+        }
+
+    def can_sever_ties_all(self, user_id: str, profile: dict) -> dict:
         bond = profile.get("bond", 50)
         if bond < 20:
             return {"success": False, "blocked": True, "bond": bond, "reason": "羁绊不足"}
