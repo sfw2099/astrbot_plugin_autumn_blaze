@@ -825,7 +825,7 @@ class AutumnBlazePlugin(Star):
             return
         with open(template_path, "r", encoding="utf-8") as f:
             graph_html = f.read()
-        group_data = self.records.get("groups", {}).get(group_id, {}).get("records", [])
+        group_data = [r for r in group_data if "type" not in r]
         group_name = "未命名群聊"
         user_map = {}
         try:
