@@ -553,17 +553,22 @@ class AutumnBlazePlugin(Star):
             if members:
                 user_name = resolve_member_name(members, user_id=user_id, fallback=user_name)
             group_records = self._get_group_records(group_id)
-            group_records[:] = [r for r in group_records if r["user_id"] != user_id]
+            existing_ids = {r["wife_id"] for r in group_records if r["user_id"] == user_id and "type" not in r}
             timestamp = datetime.now().isoformat()
+            new_count = 0
             for t_id in pool:
+                if t_id in existing_ids:
+                    continue
                 t_name = f"用户({t_id})"
                 if members:
                     t_name = resolve_member_name(members, user_id=t_id, fallback=t_name)
                 group_records.append({"user_id": user_id, "wife_id": t_id, "wife_name": t_name, "timestamp": timestamp, "forced": True, "forced_all": True})
                 maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
+                existing_ids.add(t_id)
+                new_count += 1
             group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
             save_json(self.records_file, self.records)
-            text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{len(pool)}位群友~"
+            text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{new_count}位群友~"
             if self._can_onebot_withdraw(event):
                 message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
@@ -631,17 +636,22 @@ class AutumnBlazePlugin(Star):
             if members:
                 user_name = resolve_member_name(members, user_id=user_id, fallback=user_name)
             group_records = self._get_group_records(group_id)
-            group_records[:] = [r for r in group_records if r["user_id"] != user_id]
+            existing_ids = {r["wife_id"] for r in group_records if r["user_id"] == user_id and "type" not in r}
             timestamp = datetime.now().isoformat()
+            new_count = 0
             for t_id in pool:
+                if t_id in existing_ids:
+                    continue
                 t_name = f"用户({t_id})"
                 if members:
                     t_name = resolve_member_name(members, user_id=t_id, fallback=t_name)
                 group_records.append({"user_id": user_id, "wife_id": t_id, "wife_name": t_name, "timestamp": timestamp, "forced": True, "forced_all": True})
                 maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
+                existing_ids.add(t_id)
+                new_count += 1
             group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
             save_json(self.records_file, self.records)
-            text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{len(pool)}位群友~"
+            text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{new_count}位群友~"
             if self._can_onebot_withdraw(event):
                 message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
@@ -663,8 +673,10 @@ class AutumnBlazePlugin(Star):
                 user_name = resolve_member_name(members, user_id=user_id, fallback=user_name)
         except Exception:
             pass
-        group_records = self._get_group_records(group_id)
-        group_records[:] = [r for r in group_records if r["user_id"] != user_id]
+        existing_ids = {r.get("wife_id") for r in group_records if r["user_id"] == user_id and "type" not in r}
+        if target_id in existing_ids:
+            yield event.plain_result(f"强娶成功！{dice_text}\n你已经强娶过【{target_name}】了~")
+            return
         timestamp = datetime.now().isoformat()
         group_records.append({"user_id": user_id, "wife_id": target_id, "wife_name": target_name, "timestamp": timestamp, "forced": True})
         maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=target_id, wife_name=target_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
