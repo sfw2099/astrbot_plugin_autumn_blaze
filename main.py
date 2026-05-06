@@ -578,12 +578,11 @@ class AutumnBlazePlugin(Star):
             suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count_after)}次"
             text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{new_count}位群友~{suffix}"
             grid_url = await render_grid(self, new_qqs)
-            grid_path = grid_url.replace("file:///", "") if grid_url.startswith("file:///") else grid_url
             if self._can_onebot_withdraw(event):
-                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": f"file:///{grid_path}"}}])
+                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": grid_url}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
                 return
-            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(grid_path)])
+            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromURL(grid_url)])
             return
 
         # ---- 个人强娶 ----
@@ -667,12 +666,11 @@ class AutumnBlazePlugin(Star):
             suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count_after)}次"
             text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{new_count}位群友~{suffix}"
             grid_url = await render_grid(self, new_qqs)
-            grid_path = grid_url.replace("file:///", "") if grid_url.startswith("file:///") else grid_url
             if self._can_onebot_withdraw(event):
-                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": f"file:///{grid_path}"}}])
+                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": grid_url}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
                 return
-            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(grid_path)])
+            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromURL(grid_url)])
             return
 
         # 普通个人强娶成功
@@ -956,16 +954,15 @@ class AutumnBlazePlugin(Star):
         save_json(self.records_file, self.records)
 
         couple_url = await render_couple(self, target_a, target_b, target_a_name, target_b_name)
-        couple_path = couple_url.replace("file:///", "") if couple_url.startswith("file:///") else couple_url
 
         crit_msg = "🌟 大成功！" if result.get("is_crit_success") else ""
         suffix = f"\n剩余牵线次数：{max(0, dian_limit - dian_count - 1)}次"
         text = f"{crit_msg}🎊 {user_name} 为 {target_a_name} 和 {target_b_name} 牵线成功！{dice_text}\n喜结连理，百年好合❤️{suffix}"
         if self._can_onebot_withdraw(event):
-            message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": f"file:///{couple_path}"}}])
+            message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": couple_url}}])
             if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
             return
-        yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(couple_path)])
+        yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromURL(couple_url)])
 
     # ==================== 关系图 ====================
 

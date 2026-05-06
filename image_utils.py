@@ -1,3 +1,5 @@
+import re
+
 COUPLE_HTML = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 * { margin:0; padding:0; box-sizing:border-box; }
@@ -31,6 +33,11 @@ body { background:#fff; font-family:"Microsoft YaHei","SimHei","PingFang SC",san
 </body></html>"""
 
 
+def _extract_http_url(file_url: str) -> str:
+    m = re.search(r'(https?://[^\s"\'<>]+)', file_url)
+    return m.group(1) if m else file_url
+
+
 async def render_couple(plugin, qq_a: str, qq_b: str, name_a: str, name_b: str) -> str:
     avatar_a = f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq_a}&spec=640"
     avatar_b = f"https://q4.qlogo.cn/headimg_dl?dst_uin={qq_b}&spec=640"
@@ -45,7 +52,7 @@ async def render_couple(plugin, qq_a: str, qq_b: str, name_a: str, name_b: str) 
         "clip": {"x": 0, "y": 0, "width": width, "height": height},
         "full_page": False, "device_scale_factor_level": "ultra",
     })
-    return url
+    return _extract_http_url(url)
 
 
 async def render_grid(plugin, qq_list: list[str]) -> str:
@@ -65,4 +72,4 @@ async def render_grid(plugin, qq_list: list[str]) -> str:
         "clip": {"x": 0, "y": 0, "width": width, "height": height},
         "full_page": False, "device_scale_factor_level": "ultra",
     })
-    return url
+    return _extract_http_url(url)

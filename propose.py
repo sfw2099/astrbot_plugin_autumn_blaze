@@ -205,10 +205,9 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
     event.stop_event()
 
     couple_url = await render_couple(plugin_instance, proposer_id, accepter_id, proposer_name, target_name)
-    couple_path = couple_url.replace("file:///", "") if couple_url.startswith("file:///") else couple_url
 
     yield event.chain_result([
         Comp.At(qq=proposer_id),
         Comp.Plain(f" 🎉 恭喜！{target_name} 接受了 {proposer_name} 的求婚！\n你们已正式结为夫妻❤️"),
-        Comp.Image.fromFileSystem(couple_path),
+        Comp.Image.fromURL(couple_url),
     ])
