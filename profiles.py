@@ -217,6 +217,8 @@ class ProfileManager:
 
         # 判断成功
         if result["level"] == 0:  # 大成功 → 全体强娶
+            profile["bond"] = _clamp(bond + 10)
+            self.save_profile(user_id, profile)
             success = True
             full_success = True
         elif result["level"] == 5:  # 大失败
@@ -264,7 +266,10 @@ class ProfileManager:
         success = result["level"] == 0
         is_crit_fail = result["level"] == 5
 
-        if is_crit_fail:
+        if success:
+            profile["bond"] = _clamp(bond + 10)
+            self.save_profile(user_id, profile)
+        elif is_crit_fail:
             profile["bond"] = _clamp(bond - 5)
             self.save_profile(user_id, profile)
 
@@ -293,6 +298,8 @@ class ProfileManager:
         result = self._coc_roll(skill)
 
         if result["level"] == 0:
+            profile["bond"] = _clamp(bond + 10)
+            self.save_profile(user_id, profile)
             success = True
             full_success = True
         elif result["level"] == 5:
@@ -334,7 +341,10 @@ class ProfileManager:
         success = result["level"] == 0
         is_crit_fail = result["level"] == 5
 
-        if is_crit_fail:
+        if success:
+            profile["bond"] = _clamp(bond + 10)
+            self.save_profile(user_id, profile)
+        elif is_crit_fail:
             profile["bond"] = _clamp(bond - 5)
             self.save_profile(user_id, profile)
 
@@ -363,6 +373,8 @@ class ProfileManager:
         result = self._coc_roll(skill)
 
         if result["level"] == 0:
+            profile["bond"] = _clamp(bond + 10)
+            self.save_profile(user_id, profile)
             success = True
         elif result["level"] == 5:
             profile["bond"] = _clamp(bond - 5)
