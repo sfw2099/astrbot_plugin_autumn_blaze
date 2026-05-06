@@ -16,7 +16,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 from .keyword_trigger import KeywordRouter, MatchMode
 from .onebot_api import extract_message_id
 from .waifu_relations import maybe_add_other_half_record
-from .image_utils import merge_couple_image, merge_grid_image
+from .image_utils import render_couple, render_grid
 from .profiles import ProfileManager
 from .propose import cmd_propose, handle_propose_response
 
@@ -577,10 +577,8 @@ class AutumnBlazePlugin(Star):
             force_count_after = len([r for r in group_records if r["user_id"] == user_id and r.get("type") == "force_marry"])
             suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count_after)}次"
             text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{new_count}位群友~{suffix}"
-            temp_dir = os.path.join(self.data_dir, "temp")
-            os.makedirs(temp_dir, exist_ok=True)
-            grid_path = os.path.join(temp_dir, f"force_all_{user_id}_{datetime.now().strftime('%H%M%S')}.png")
-            merge_grid_image(new_qqs, grid_path)
+            grid_url = await render_grid(self, new_qqs)
+            grid_path = grid_url.replace("file:///", "") if grid_url.startswith("file:///") else grid_url
             if self._can_onebot_withdraw(event):
                 message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": f"file:///{grid_path}"}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
@@ -668,10 +666,8 @@ class AutumnBlazePlugin(Star):
             force_count_after = len([r for r in group_records if r["user_id"] == user_id and r.get("type") == "force_marry"])
             suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count_after)}次"
             text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{new_count}位群友~{suffix}"
-            temp_dir = os.path.join(self.data_dir, "temp")
-            os.makedirs(temp_dir, exist_ok=True)
-            grid_path = os.path.join(temp_dir, f"force_crit_{user_id}_{datetime.now().strftime('%H%M%S')}.png")
-            merge_grid_image(new_qqs, grid_path)
+            grid_url = await render_grid(self, new_qqs)
+            grid_path = grid_url.replace("file:///", "") if grid_url.startswith("file:///") else grid_url
             if self._can_onebot_withdraw(event):
                 message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": f"file:///{grid_path}"}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
@@ -959,10 +955,8 @@ class AutumnBlazePlugin(Star):
 
         save_json(self.records_file, self.records)
 
-        temp_dir = os.path.join(self.data_dir, "temp")
-        os.makedirs(temp_dir, exist_ok=True)
-        couple_path = os.path.join(temp_dir, f"couple_dy_{user_id}_{datetime.now().strftime('%H%M%S')}.png")
-        merge_couple_image(target_a, target_b, target_a_name, target_b_name, couple_path)
+        couple_url = await render_couple(self, target_a, target_b, target_a_name, target_b_name)
+        couple_path = couple_url.replace("file:///", "") if couple_url.startswith("file:///") else couple_url
 
         crit_msg = "🌟 大成功！" if result.get("is_crit_success") else ""
         suffix = f"\n剩余牵线次数：{max(0, dian_limit - dian_count - 1)}次"

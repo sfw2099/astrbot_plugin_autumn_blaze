@@ -1,12 +1,11 @@
 import asyncio
-import os
 import time
 from datetime import datetime
 from astrbot.api.event import AstrMessageEvent, MessageChain
 import astrbot.api.message_components as Comp
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
 from .utils import save_json, extract_target_id_from_message, resolve_member_name
-from .image_utils import merge_couple_image
+from .image_utils import render_couple
 
 propose_requests = {}
 
@@ -205,10 +204,8 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
 
     event.stop_event()
 
-    temp_dir = os.path.join(plugin_instance.data_dir, "temp")
-    os.makedirs(temp_dir, exist_ok=True)
-    couple_path = os.path.join(temp_dir, f"couple_qh_{proposer_id}_{datetime.now().strftime('%H%M%S')}.png")
-    merge_couple_image(proposer_id, accepter_id, proposer_name, target_name, couple_path)
+    couple_url = await render_couple(plugin_instance, proposer_id, accepter_id, proposer_name, target_name)
+    couple_path = couple_url.replace("file:///", "") if couple_url.startswith("file:///") else couple_url
 
     yield event.chain_result([
         Comp.At(qq=proposer_id),
