@@ -924,19 +924,8 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result(f"牵线失败！{dice_text}\n红线不够牢，缘分尚未到……")
             return
 
-        # Success: clear existing records and set marriage
+        # Success: add marriage records (relationships coexist)
         timestamp = datetime.now().isoformat()
-
-        # Clear existing wife records for both users and remove their previous spouses' married_to
-        for uid in [target_a, target_b]:
-            old_spouse = self._profile_manager.get_profile(uid).get("married_to")
-            if old_spouse:
-                sp = self._profile_manager.get_profile(old_spouse)
-                sp["married_to"] = None
-                self._profile_manager.save_profile(old_spouse, sp)
-
-        # Clear existing wife records
-        group_records[:] = [r for r in group_records if r.get("user_id") not in [target_a, target_b] or "type" in r]
 
         # Add marriage records
         group_records.append({"user_id": target_a, "wife_id": target_b, "wife_name": target_b_name, "timestamp": timestamp, "dian_yuanyang": True})

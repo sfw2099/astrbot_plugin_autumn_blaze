@@ -149,24 +149,8 @@ class ProfileManager:
         proposer = self.get_profile(proposer_id)
         target = self.get_profile(target_id)
 
-        proposer_was_married = proposer.get("married_to")
-        target_was_married = target.get("married_to")
-
         proposer["bond"] = _clamp(proposer.get("bond", 50) + 5)
         target["bond"] = _clamp(target.get("bond", 50) + 5)
-
-        if target_was_married and target_was_married != proposer_id:
-            pass  # 不再扣羁绊
-
-        if proposer_was_married:
-            proposer_old_spouse = self.get_profile(proposer_was_married)
-            proposer_old_spouse["married_to"] = None
-            self.save_profile(proposer_was_married, proposer_old_spouse)
-
-        if target_was_married and target_was_married != proposer_id:
-            target_old_spouse = self.get_profile(target_was_married)
-            target_old_spouse["married_to"] = None
-            self.save_profile(target_was_married, target_old_spouse)
 
         proposer["married_to"] = target_id
         target["married_to"] = proposer_id

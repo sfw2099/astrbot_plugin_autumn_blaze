@@ -175,11 +175,6 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
     timestamp = datetime.now().isoformat()
     group_records = plugin_instance._get_group_records(group_id)
 
-    if is_all:
-        group_records[:] = [r for r in group_records if r["user_id"] != accepter_id]
-    else:
-        group_records[:] = [r for r in group_records if r["user_id"] not in [accepter_id, proposer_id]]
-
     marriage_data = [
         {
             "user_id": proposer_id,
@@ -187,6 +182,7 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
             "wife_name": target_name,
             "timestamp": timestamp,
             "forced": True,
+            "proposed": True,
         },
         {
             "user_id": accepter_id,
@@ -194,6 +190,7 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
             "wife_name": proposer_name,
             "timestamp": timestamp,
             "forced": True,
+            "proposed": True,
         },
     ]
     group_records.extend(marriage_data)
