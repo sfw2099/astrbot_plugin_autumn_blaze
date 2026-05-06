@@ -336,7 +336,7 @@ class AutumnBlazePlugin(Star):
         self._cleanup_inactive(group_id)
         daily_limit = self.config.get("daily_limit", 1)
         group_records = self._get_group_records(group_id)
-        user_recs = [r for r in group_records if r["user_id"] == user_id]
+        user_recs = [r for r in group_records if r["user_id"] == user_id and "type" not in r]
         today_count = len(user_recs)
         if today_count >= daily_limit:
             if daily_limit == 1:
@@ -453,7 +453,7 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result("你今天还没有抽过老婆哦~")
             return
         group_recs = self.records.get("groups", {}).get(group_id, {}).get("records", [])
-        user_recs = [r for r in group_recs if r["user_id"] == user_id]
+        user_recs = [r for r in group_recs if r["user_id"] == user_id and "type" not in r and "wife_name" in r]
         if not user_recs:
             yield event.plain_result("你今天还没有抽过老婆哦~")
             return
