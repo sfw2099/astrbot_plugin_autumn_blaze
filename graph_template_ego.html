@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <script>
+        {{ vis_js_content | safe }}
+    </script>
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background: #ffffff;
+            overflow: hidden;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+
+        #network-container {
+            width: 100%;
+            height: calc(100vh - 80px);
+            position: relative;
+        }
+
+        .header {
+            width: 100%;
+            height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            color: #000000;
+            font-size: 32px;
+            font-weight: bold;
+            background-color: #fff;
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            position: relative;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">🌸 {{ focus_node_name }} 的个人关系图谱 🌸</div>
+    <div id="network-container"></div>
+
+    <script>
+        const hourlyTag = new Date().toISOString().slice(0, 13);
+        const raw_data = {{ records | tojson }};
+        const user_map = {{ user_map | tojson }} || {};
+        const focus_node_id = "{{ focus_node_id }}";
+        const nodes = [];
+        const edges = [];
+        const userSet = new Set();
+
+        raw_data.forEach(r => {
+            const userName = user_map[r.user_id] || "用户" + r.user_id;
+            const wifeName = user_map[r.wife_id] || r.wife_name;
+
+            [{ id: r.user_id, name: userName }, { id: r.wife_id, name: wifeName }].forEach(u => {
+                if (!userSet.has(u.id)) {
+                    userSet.add(u.id);
+                    const isCenter = u.id === focus_node_id;
+                    nodes.push({
+                        id: u.id,
+                        label: u.name,
+                        shape: 'circularImage',
+                        image: `https://q4.qlogo.cn/headimg_dl?dst_uin=${u.id}&spec=640&t=${hourlyTag}`,
+                        borderWidth: 8,
+                        size: isCenter ? 140 : 90,
+                        color: { border: isCenter ? '#fa8c16' : '#4facfe', background: '#ffffff' },
+                        fixed: isCenter ? { x: true, y: true } : false,
+                        x: isCenter ? 0 : undefined,
+                        y: isCenter ? 0 : undefined,
+                        font: {
+                            color: '#000000',
+                            size: isCenter ? 56 : 44,
+                            vadjust: isCenter ? 50 : 35,
+                            strokeWidth: 6,
+                            strokeColor: '#ffffff',
+                            bold: { color: '#000000', size: isCenter ? 56 : 44, vadjust: isCenter ? 50 : 35 }
+                        }
+                    });
+                }
+            });
+
+            let edgeLabel, edgeColor;
+            if (r.dian_yuanyang) {
+                edgeLabel = "牵线";
+                edgeColor = '#eb2f96';
+            } else if (r.proposed) {
+                edgeLabel = "求婚";
+                edgeColor = '#fa541c';
+            } else if (r.forced_all) {
+                edgeLabel = "全娶";
+                edgeColor = '#cf1322';
+            } else if (r.forced) {
+                edgeLabel = "强娶";
+                edgeColor = '#ff4d4f';
+            } else if (r.auto_set) {
+                edgeLabel = "互抽";
+                edgeColor = '#722ed1';
+            } else {
+                edgeLabel = "抽中";
+                edgeColor = '#1890ff';
+            }
+
+            edges.push({
+                from: r.user_id,
+                to: r.wife_id,
+                label: edgeLabel,
+                arrows: {to: {enabled: true,scaleFactor: 3,type: 'arrow'}},
+                color: { color: edgeColor, width: 4 },
+                font: { align: 'middle', color: '#444', size: 48, background: '#ffffff' },
+                length: 700
+            });
+        });
+
+        const container = document.getElementById('network-container');
+        const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+        const options = {
+            nodes: {
+                shape: 'circularImage',
+                font: { face: 'Microsoft YaHei' }
+            },
+            edges: {
+                smooth: {
+                    type: 'curvedCW',
+                    roundness: 0.2
+                }
+            },
+            physics: {
+                enabled: true,
+                barnesHut: {
+                    gravitationalConstant: -80000,
+                    centralGravity: 5,
+                    springLength: 500,
+                    springConstant: 0.02,
+                    damping: 0.09,
+                    avoidOverlap: 1
+                },
+                stabilization: {
+                    enabled: true,
+                    iterations: {{ iterations }},
+                    updateInterval: 25,
+                    onlyDynamicEdges: false,
+                    fit: true
+                }
+            }
+        };
+        const network = new vis.Network(container, data, options);
+        network.once("stabilizationIterationsDone", function () {
+            network.focus(focus_node_id, { scale: 1.2, animation: false });
+            network.fit({ animation: false });
+        });
+    </script>
+</body>
+
+</html>

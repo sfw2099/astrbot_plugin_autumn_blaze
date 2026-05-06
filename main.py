@@ -77,6 +77,7 @@ class AutumnBlazePlugin(Star):
             "show_history": self._cmd_show_history,
             "force_marry": self._cmd_force_marry,
             "show_graph": self._cmd_show_graph,
+            "show_ego_graph": self._cmd_show_ego_graph,
             "show_help": self._cmd_show_help,
             "reset_records": self._cmd_reset_records,
             "reset_force_cd": self._cmd_reset_force_cd,
@@ -950,6 +951,15 @@ class AutumnBlazePlugin(Star):
         async for result in self._cmd_show_graph(event):
             yield result
 
+    @filter.command("个人关系图", alias={"grgxt"})
+    async def show_ego_graph(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_show_ego_graph(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 个人关系图异常: {e}", exc_info=True)
+            yield event.plain_result(f"个人关系图出错了：{e}")
+
     async def _cmd_show_graph(self, event: AstrMessageEvent):
         group_id = str(event.get_group_id())
         if not is_allowed_group(group_id, self.config):
@@ -1000,6 +1010,71 @@ class AutumnBlazePlugin(Star):
                 "vis_js_content": vis_js_content, "group_id": group_id,
                 "group_name": group_name, "user_map": user_map,
                 "records": group_data, "iterations": iter_count,
+            }, options={
+                "type": "png", "quality": None, "scale": "device",
+                "clip": {"x": 0, "y": 0, "width": clip_width, "height": clip_height},
+                "full_page": False, "device_scale_factor_level": "ultra",
+            })
+            yield event.image_result(url)
+        except Exception as e:
+            logger.error(f"渲染失败: {e}")
+
+    async def _cmd_show_ego_graph(self, event: AstrMessageEvent):
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+        user_id = str(event.get_sender_id())
+        iter_count = self.config.get("iterations", 140)
+        vis_js_path = os.path.join(self.curr_dir, "vis-network.min.js")
+        vis_js_content = ""
+        if os.path.exists(vis_js_path):
+            with open(vis_js_path, "r", encoding="utf-8") as f:
+                vis_js_content = f.read()
+        else:
+            logger.error(f"找不到 JS 文件: {vis_js_path}")
+        template_path = os.path.join(self.curr_dir, "graph_template_ego.html")
+        if not os.path.exists(template_path):
+            yield event.plain_result(f"错误：找不到模板文件 {template_path}")
+            return
+        with open(template_path, "r", encoding="utf-8") as f:
+            graph_html = f.read()
+        group_data = self.records.get("groups", {}).get(group_id, {}).get("records", [])
+        group_data = [r for r in group_data if "type" not in r and "wife_name" in r]
+        ego_data = [r for r in group_data if str(r.get("user_id")) == user_id or str(r.get("wife_id")) == user_id]
+        if not ego_data:
+            yield event.plain_result("你今天还没有任何关系记录哦~")
+            return
+        focus_node_name = event.get_sender_name() or f"用户({user_id})"
+        user_map = {}
+        try:
+            if event.get_platform_name() == "aiocqhttp":
+                members = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
+                if isinstance(members, dict) and "data" in members:
+                    members = members["data"]
+                if isinstance(members, list):
+                    for m in members:
+                        uid = str(m.get("user_id"))
+                        user_map[uid] = m.get("card") or m.get("nickname") or uid
+                    if user_id in user_map:
+                        focus_node_name = user_map[user_id]
+        except Exception:
+            pass
+        unique_nodes = set()
+        for r in ego_data:
+            unique_nodes.add(str(r.get("user_id")))
+            unique_nodes.add(str(r.get("wife_id")))
+        node_count = len(unique_nodes)
+        clip_width = 1920
+        clip_height = 1080 + (max(0, node_count - 5) * 80)
+        try:
+            url = await self.html_render(graph_html, {
+                "vis_js_content": vis_js_content,
+                "focus_node_name": focus_node_name,
+                "focus_node_id": user_id,
+                "user_map": user_map,
+                "records": ego_data,
+                "iterations": iter_count,
             }, options={
                 "type": "png", "quality": None, "scale": "device",
                 "clip": {"x": 0, "y": 0, "width": clip_width, "height": clip_height},

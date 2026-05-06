@@ -16,6 +16,9 @@ _DEFAULT_KEYWORD_ROUTES: tuple[KeywordRoute, ...] = (
     KeywordRoute(keyword="羁绊图谱", action="show_graph"),
     KeywordRoute(keyword="gxt", action="show_graph"),
 
+    KeywordRoute(keyword="个人关系图", action="show_ego_graph"),
+    KeywordRoute(keyword="grgxt", action="show_ego_graph"),
+
     KeywordRoute(keyword="抽老婆帮助", action="show_help"),
     KeywordRoute(keyword="老婆插件帮助", action="show_help"),
     KeywordRoute(keyword="clpbz", action="show_help"),
