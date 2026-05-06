@@ -64,6 +64,26 @@ def extract_target_id_from_message(event: AstrMessageEvent) -> str | None:
 
     return None
 
+
+def extract_all_at_from_message(event: AstrMessageEvent) -> list[str]:
+    at_ids = []
+    for component in event.message_obj.message:
+        if isinstance(component, Comp.At):
+            at_ids.append(str(component.qq))
+    if at_ids:
+        return at_ids
+
+    raw_text = str(getattr(event, "message_str", "") or "")
+    cq_ats = re.findall(r"\[CQ:at,qq=(\d+)\]", raw_text)
+    if cq_ats:
+        return cq_ats
+
+    plain_ats = re.findall(r"@(\d{5,12})", raw_text)
+    if plain_ats:
+        return plain_ats
+
+    return []
+
 def is_allowed_group(group_id: str, config: object) -> bool:
     whitelist = config.get("whitelist_groups", [])
     blacklist = config.get("blacklist_groups", [])

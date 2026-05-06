@@ -25,6 +25,7 @@ from .utils import (
     save_json,
     normalize_user_id_set,
     extract_target_id_from_message,
+    extract_all_at_from_message,
     is_allowed_group,
     resolve_member_name,
 )
@@ -81,6 +82,7 @@ class AutumnBlazePlugin(Star):
             "reset_force_cd": self._cmd_reset_force_cd,
             "propose_command": self.propose_command,
             "sever_ties": self._cmd_sever_ties,
+            "dian_yuanyang": self._cmd_dian_yuanyang,
         }
         self._keyword_trigger_block_prefixes = ("/", "!", "！")
         logger.info(f"秋焰插件已加载。数据目录: {self.data_dir}")
@@ -798,6 +800,159 @@ class AutumnBlazePlugin(Star):
         group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
         save_json(self.records_file, self.records)
         yield event.plain_result(f"⚔️ {user_name} 斩断红尘！{dice_text}\n已清除你今日所有羁绊连线（共 {n} 条）。")
+
+    # ==================== 点鸳鸯 ====================
+
+    @filter.command("点鸳鸯", alias={"dyy"})
+    async def dian_yuanyang(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_dian_yuanyang(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 点鸳鸯异常: {e}", exc_info=True)
+            yield event.plain_result(f"点鸳鸯出错了：{e}")
+
+    async def _cmd_dian_yuanyang(self, event: AstrMessageEvent):
+        if event.is_private_chat():
+            yield event.plain_result("此功能仅在群聊中可用哦~")
+            return
+        user_id = str(event.get_sender_id())
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+
+        dian_limit = self.config.get("dian_yuanyang_limit", 1)
+        profile = self._profile_manager.get_profile(user_id)
+        self._profile_manager.ensure_daily_reset(user_id, profile)
+
+        group_records = self._get_group_records(group_id)
+        dian_recs = [r for r in group_records if r["user_id"] == user_id and r.get("type") == "dian_yuanyang"]
+        dian_count = len(dian_recs)
+        if dian_count >= dian_limit:
+            yield event.plain_result(f"今日点鸳鸯次数已用完 ({dian_count}/{dian_limit})。")
+            return
+
+        bot_id = str(event.get_self_id())
+        at_ids = extract_all_at_from_message(event)
+        at_ids = [a for a in at_ids if a != user_id]
+
+        if len(at_ids) > 2:
+            yield event.plain_result("一次最多只能指定两个人哦~")
+            return
+
+        members = []
+        try:
+            if event.get_platform_name() == "aiocqhttp":
+                members = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
+                if isinstance(members, dict) and "data" in members:
+                    members = members["data"]
+        except Exception:
+            pass
+
+        excluded = self._draw_excluded_users()
+        if not self.config.get("allow_marry_bot", False):
+            excluded.add(bot_id)
+        excluded.add(user_id)
+
+        # Resolve target_a and target_b
+        if len(at_ids) == 2:
+            target_a, target_b = at_ids[0], at_ids[1]
+        elif len(at_ids) == 1:
+            # Random pick one for the mentioned user from active pool
+            target_a = at_ids[0]
+            if target_a in excluded:
+                yield event.plain_result("指定的用户不在可选池中。")
+                return
+            active_pool = self.active_users.get(group_id, {})
+            pool = [uid for uid in active_pool.keys() if uid not in excluded and uid != target_a]
+            if members:
+                member_ids = {str(m.get("user_id")) for m in members}
+                pool = [uid for uid in pool if uid in member_ids]
+            if not pool:
+                yield event.plain_result("可选池中没有足够群友，请稍后再试。")
+                return
+            target_b = random.choice(pool)
+        else:
+            # Random pick two from active pool
+            active_pool = self.active_users.get(group_id, {})
+            pool = [uid for uid in active_pool.keys() if uid not in excluded]
+            if members:
+                member_ids = {str(m.get("user_id")) for m in members}
+                pool = [uid for uid in pool if uid in member_ids]
+            if len(pool) < 2:
+                yield event.plain_result("可选池中群友不足，请稍后再试。")
+                return
+            picks = random.sample(pool, 2)
+            target_a, target_b = picks[0], picks[1]
+
+        if target_a == target_b:
+            yield event.plain_result("不能给一个人自己牵线哦~")
+            return
+
+        # Resolve names
+        target_a_name = f"用户({target_a})"
+        target_b_name = f"用户({target_b})"
+        for m in members:
+            if str(m.get("user_id")) == str(target_a):
+                target_a_name = m.get("card") or m.get("nickname") or target_a_name
+            if str(m.get("user_id")) == str(target_b):
+                target_b_name = m.get("card") or m.get("nickname") or target_b_name
+
+        # Ensure profiles exist
+        self._get_profile(target_a)
+        self._get_profile(target_b)
+
+        # COC check
+        result = self._profile_manager.can_dian_yuanyang(user_id, profile)
+        if result.get("blocked"):
+            yield event.plain_result("羁绊不足，无法牵线。")
+            return
+
+        dice_text = f"D100={result['roll']}/{result['skill']} {result['label']} (需困难成功)"
+        user_name = event.get_sender_name() or f"用户({user_id})"
+
+        if result.get("is_crit_fail"):
+            group_records.append({"user_id": user_id, "type": "dian_yuanyang", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self.records_file, self.records)
+            yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5，红绳断裂……")
+            return
+
+        if not result["success"]:
+            group_records.append({"user_id": user_id, "type": "dian_yuanyang", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self.records_file, self.records)
+            yield event.plain_result(f"牵线失败！{dice_text}\n红线不够牢，缘分尚未到……")
+            return
+
+        # Success: clear existing records and set marriage
+        timestamp = datetime.now().isoformat()
+
+        # Clear existing wife records for both users and remove their previous spouses' married_to
+        for uid in [target_a, target_b]:
+            old_spouse = self._profile_manager.get_profile(uid).get("married_to")
+            if old_spouse:
+                sp = self._profile_manager.get_profile(old_spouse)
+                sp["married_to"] = None
+                self._profile_manager.save_profile(old_spouse, sp)
+
+        # Clear existing wife records
+        group_records[:] = [r for r in group_records if r.get("user_id") not in [target_a, target_b] or "type" in r]
+
+        # Add marriage records
+        group_records.append({"user_id": target_a, "wife_id": target_b, "wife_name": target_b_name, "timestamp": timestamp, "dian_yuanyang": True})
+        group_records.append({"user_id": target_b, "wife_id": target_a, "wife_name": target_a_name, "timestamp": timestamp, "dian_yuanyang": True})
+        group_records.append({"user_id": user_id, "type": "dian_yuanyang", "success": True, "timestamp": timestamp})
+
+        # Set married_to in profiles
+        for uid, other in [(target_a, target_b), (target_b, target_a)]:
+            p = self._profile_manager.get_profile(uid)
+            p["married_to"] = other
+            self._profile_manager.save_profile(uid, p)
+
+        save_json(self.records_file, self.records)
+
+        crit_msg = "🌟 大成功！" if result.get("is_crit_success") else ""
+        yield event.plain_result(f"{crit_msg}🎊 {user_name} 为 {target_a_name} 和 {target_b_name} 牵线成功！{dice_text}\n喜结连理，百年好合❤️")
 
     # ==================== 关系图 ====================
 

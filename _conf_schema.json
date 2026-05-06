@@ -29,6 +29,12 @@
         "hint": "每位用户每天可以斩红尘的最大次数。",
         "default": 1
     },
+    "dian_yuanyang_limit": {
+        "type": "int",
+        "description": "每日点鸳鸯次数上限",
+        "hint": "每位用户每天可以点鸳鸯的最大次数。",
+        "default": 1
+    },
     "max_records": {
         "type": "int",
         "description": "活跃群友记录上限",

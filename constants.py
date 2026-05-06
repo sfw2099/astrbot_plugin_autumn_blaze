@@ -25,4 +25,7 @@ _DEFAULT_KEYWORD_ROUTES: tuple[KeywordRoute, ...] = (
 
     KeywordRoute(keyword="斩红尘", action="sever_ties"),
     KeywordRoute(keyword="zch", action="sever_ties"),
+
+    KeywordRoute(keyword="点鸳鸯", action="dian_yuanyang"),
+    KeywordRoute(keyword="dyy", action="dian_yuanyang"),
 )

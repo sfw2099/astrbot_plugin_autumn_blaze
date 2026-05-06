@@ -366,6 +366,42 @@ class ProfileManager:
             "is_crit_fail": is_crit_fail,
         }
 
+    # ============ 点鸳鸯判定 ============
+
+    def can_dian_yuanyang(self, user_id: str, profile: dict) -> dict:
+        bond = profile.get("bond", 50)
+        if bond < 20:
+            return {"success": False, "blocked": True, "bond": bond, "reason": "羁绊不足"}
+
+        fortune = profile.get("today_fortune") or 0
+        skill = bond + fortune // 3
+
+        result = self._coc_roll(skill)
+
+        if result["level"] == 0:
+            success = True
+        elif result["level"] == 5:
+            profile["bond"] = _clamp(bond - 5)
+            self.save_profile(user_id, profile)
+            success = False
+        elif result["level"] <= 2:
+            success = True
+        else:
+            success = False
+
+        return {
+            "success": success,
+            "blocked": False,
+            "roll": result["roll"],
+            "skill": skill,
+            "level": result["level"],
+            "label": result["label"],
+            "bond": profile.get("bond", 50),
+            "fortune": fortune,
+            "is_crit_success": result["level"] == 0,
+            "is_crit_fail": result["level"] == 5,
+        }
+
     def update_yesterday_propose(self, user_id: str, target_id: str | None):
         profile = self.get_profile(user_id)
         today_target = profile.get("proposed_to_today")
