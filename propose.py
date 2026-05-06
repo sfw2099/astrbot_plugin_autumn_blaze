@@ -1,10 +1,12 @@
 import asyncio
+import os
 import time
 from datetime import datetime
 from astrbot.api.event import AstrMessageEvent, MessageChain
 import astrbot.api.message_components as Comp
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
 from .utils import save_json, extract_target_id_from_message, resolve_member_name
+from .image_utils import merge_couple_image
 
 propose_requests = {}
 
@@ -202,6 +204,14 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
         del propose_requests[group_id][proposer_key]
 
     event.stop_event()
-    yield event.plain_result(
-        f"🎉 恭喜！{target_name} 接受了 {proposer_name} 的求婚！\n你们已正式结为夫妻❤️"
-    )
+
+    temp_dir = os.path.join(plugin_instance.data_dir, "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    couple_path = os.path.join(temp_dir, f"couple_qh_{proposer_id}_{datetime.now().strftime('%H%M%S')}.png")
+    merge_couple_image(proposer_id, accepter_id, proposer_name, target_name, couple_path)
+
+    yield event.chain_result([
+        Comp.At(qq=proposer_id),
+        Comp.Plain(f" 🎉 恭喜！{target_name} 接受了 {proposer_name} 的求婚！\n你们已正式结为夫妻❤️"),
+        Comp.Image.fromFileSystem(couple_path),
+    ])

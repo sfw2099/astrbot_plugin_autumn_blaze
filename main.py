@@ -16,6 +16,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 from .keyword_trigger import KeywordRouter, MatchMode
 from .onebot_api import extract_message_id
 from .waifu_relations import maybe_add_other_half_record
+from .image_utils import merge_couple_image, merge_grid_image
 from .profiles import ProfileManager
 from .propose import cmd_propose, handle_propose_response
 
@@ -559,6 +560,7 @@ class AutumnBlazePlugin(Star):
             existing_ids = {r["wife_id"] for r in group_records if r["user_id"] == user_id and "type" not in r}
             timestamp = datetime.now().isoformat()
             new_count = 0
+            new_qqs = []
             for t_id in pool:
                 if t_id in existing_ids:
                     continue
@@ -569,14 +571,21 @@ class AutumnBlazePlugin(Star):
                 maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
                 existing_ids.add(t_id)
                 new_count += 1
+                new_qqs.append(t_id)
             group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
             save_json(self.records_file, self.records)
-            text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{new_count}位群友~"
+            force_count_after = len([r for r in group_records if r["user_id"] == user_id and r.get("type") == "force_marry"])
+            suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count_after)}次"
+            text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{new_count}位群友~{suffix}"
+            temp_dir = os.path.join(self.data_dir, "temp")
+            os.makedirs(temp_dir, exist_ok=True)
+            grid_path = os.path.join(temp_dir, f"force_all_{user_id}_{datetime.now().strftime('%H%M%S')}.png")
+            merge_grid_image(new_qqs, grid_path)
             if self._can_onebot_withdraw(event):
-                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}])
+                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": f"file:///{grid_path}"}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
                 return
-            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text)])
+            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(grid_path)])
             return
 
         # ---- 个人强娶 ----
@@ -642,6 +651,7 @@ class AutumnBlazePlugin(Star):
             existing_ids = {r["wife_id"] for r in group_records if r["user_id"] == user_id and "type" not in r}
             timestamp = datetime.now().isoformat()
             new_count = 0
+            new_qqs = []
             for t_id in pool:
                 if t_id in existing_ids:
                     continue
@@ -652,14 +662,21 @@ class AutumnBlazePlugin(Star):
                 maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=t_id, wife_name=t_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
                 existing_ids.add(t_id)
                 new_count += 1
+                new_qqs.append(t_id)
             group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
             save_json(self.records_file, self.records)
-            text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{new_count}位群友~"
+            force_count_after = len([r for r in group_records if r["user_id"] == user_id and r.get("type") == "force_marry"])
+            suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count_after)}次"
+            text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{new_count}位群友~{suffix}"
+            temp_dir = os.path.join(self.data_dir, "temp")
+            os.makedirs(temp_dir, exist_ok=True)
+            grid_path = os.path.join(temp_dir, f"force_crit_{user_id}_{datetime.now().strftime('%H%M%S')}.png")
+            merge_grid_image(new_qqs, grid_path)
             if self._can_onebot_withdraw(event):
-                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}])
+                message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": f"file:///{grid_path}"}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
                 return
-            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text)])
+            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(grid_path)])
             return
 
         # 普通个人强娶成功
@@ -686,7 +703,8 @@ class AutumnBlazePlugin(Star):
         group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
         save_json(self.records_file, self.records)
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={target_id}&spec=640"
-        text = f"强娶成功！{dice_text}\n娶到了【{target_name}】！"
+        suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count - 1)}次"
+        text = f"强娶成功！{dice_text}\n娶到了【{target_name}】！{suffix}"
         if self._can_onebot_withdraw(event):
             message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": avatar_url}}])
             if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
@@ -941,8 +959,19 @@ class AutumnBlazePlugin(Star):
 
         save_json(self.records_file, self.records)
 
+        temp_dir = os.path.join(self.data_dir, "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+        couple_path = os.path.join(temp_dir, f"couple_dy_{user_id}_{datetime.now().strftime('%H%M%S')}.png")
+        merge_couple_image(target_a, target_b, target_a_name, target_b_name, couple_path)
+
         crit_msg = "🌟 大成功！" if result.get("is_crit_success") else ""
-        yield event.plain_result(f"{crit_msg}🎊 {user_name} 为 {target_a_name} 和 {target_b_name} 牵线成功！{dice_text}\n喜结连理，百年好合❤️")
+        suffix = f"\n剩余牵线次数：{max(0, dian_limit - dian_count - 1)}次"
+        text = f"{crit_msg}🎊 {user_name} 为 {target_a_name} 和 {target_b_name} 牵线成功！{dice_text}\n喜结连理，百年好合❤️{suffix}"
+        if self._can_onebot_withdraw(event):
+            message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": f"file:///{couple_path}"}}])
+            if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
+            return
+        yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(couple_path)])
 
     # ==================== 关系图 ====================
 
