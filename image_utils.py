@@ -32,13 +32,42 @@ def _round_corners(img: Image.Image, radius: int) -> Image.Image:
 
 
 def _try_get_font(size: int) -> ImageFont.FreeTypeFont:
-    for path in [
-        "C:/Windows/Fonts/msyh.ttc",
+    font_paths = [
+        # TrueType Fonts (prefer .ttf over .ttc for compatibility)
         "C:/Windows/Fonts/simhei.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    ]:
+        "C:/Windows/Fonts/simkai.ttf",
+        "C:/Windows/Fonts/Deng.ttf",
+        "C:/Windows/Fonts/Dengb.ttf",
+        # TrueType Collections
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/msyhbd.ttc",
+        "C:/Windows/Fonts/simsun.ttc",
+        "C:/Windows/Fonts/mingliu.ttc",
+        "C:/Windows/Fonts/msjh.ttc",
+    ]
+
+    for path in font_paths:
         if os.path.exists(path):
-            return ImageFont.truetype(path, size)
+            try:
+                font = ImageFont.truetype(path, size)
+                return font
+            except Exception:
+                continue
+
+    font_dir = "C:/Windows/Fonts"
+    if os.path.isdir(font_dir):
+        for f in sorted(os.listdir(font_dir)):
+            if not f.lower().endswith(".ttf"):
+                continue
+            fp = os.path.join(font_dir, f)
+            try:
+                font = ImageFont.truetype(fp, size)
+                bbox = ImageDraw.Draw(Image.new("L", (1, 1))).textbbox((0, 0), "\u4e2d", font=font)
+                if bbox[2] - bbox[0] > 1:
+                    return font
+            except Exception:
+                continue
+
     return ImageFont.load_default()
 
 
