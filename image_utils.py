@@ -5,9 +5,13 @@ import re
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-COUPLE_HTML = None  # unused, kept for reference
+COUPLE_HTML = None
 
 _TEMP_DIR = None
+_FONT_CACHE_PATH = None
+_CJK_FONT_URLS = [
+    "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf",
+]
 
 
 def _init_temp(temp_dir: str):
@@ -37,7 +41,7 @@ def _round_corners(img: Image.Image, r: int) -> Image.Image:
     return out
 
 
-def _try_font(size: int) -> ImageFont.FreeTypeFont:
+def _try_system_font(size: int) -> ImageFont.FreeTypeFont | None:
     paths = [
         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
@@ -53,8 +57,6 @@ def _try_font(size: int) -> ImageFont.FreeTypeFont:
                 return ImageFont.truetype(p, size)
             except Exception:
                 continue
-
-    # Scan Linux font dirs
     for d in ["/usr/share/fonts", "/usr/local/share/fonts"]:
         if not os.path.isdir(d):
             continue
@@ -70,6 +72,54 @@ def _try_font(size: int) -> ImageFont.FreeTypeFont:
                         return font
                 except Exception:
                     continue
+    return None
+
+
+def _download_cjk_font() -> str | None:
+    global _FONT_CACHE_PATH
+    cache_dir = os.path.abspath(os.path.join(_TEMP_DIR or os.getcwd(), "..", "fonts"))
+    os.makedirs(cache_dir, exist_ok=True)
+    for f in os.listdir(cache_dir):
+        if f.lower().endswith((".ttf", ".ttc", ".otf")):
+            fp = os.path.join(cache_dir, f)
+            try:
+                font = ImageFont.truetype(fp, 16)
+                bbox = ImageDraw.Draw(Image.new("L", (1, 1))).textbbox((0, 0), "中", font=font)
+                if bbox[2] - bbox[0] > 1:
+                    _FONT_CACHE_PATH = fp
+                    return fp
+            except Exception:
+                continue
+    for url in _CJK_FONT_URLS:
+        try:
+            resp = requests.get(url, timeout=60)
+            if resp.status_code == 200:
+                ext = url.rsplit(".", 1)[-1]
+                fp = os.path.join(cache_dir, f"cjk_font.{ext}")
+                with open(fp, "wb") as f:
+                    f.write(resp.content)
+                _FONT_CACHE_PATH = fp
+                return fp
+        except Exception:
+            continue
+    return None
+
+
+def _try_font(size: int) -> ImageFont.FreeTypeFont:
+    f = _try_system_font(size)
+    if f:
+        return f
+    if _FONT_CACHE_PATH and os.path.exists(_FONT_CACHE_PATH):
+        try:
+            return ImageFont.truetype(_FONT_CACHE_PATH, size)
+        except Exception:
+            pass
+    dl = _download_cjk_font()
+    if dl:
+        try:
+            return ImageFont.truetype(dl, size)
+        except Exception:
+            pass
     return ImageFont.load_default()
 
 
