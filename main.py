@@ -81,7 +81,7 @@ class AutumnBlazePlugin(Star):
             "show_ego_graph": self._cmd_show_ego_graph,
             "show_help": self._cmd_show_help,
             "reset_records": self._cmd_reset_records,
-            "reset_force_cd": self._cmd_reset_force_cd,
+            "reset_counts": self._cmd_reset_counts,
             "propose_command": self.propose_command,
             "sever_ties": self._cmd_sever_ties,
             "dian_yuanyang": self._cmd_dian_yuanyang,
@@ -1135,7 +1135,7 @@ class AutumnBlazePlugin(Star):
             "9. 【求婚 @某人】：向对方发起求婚\n"
             "10. 【求婚】：不@任何人可向全体发起求婚\n"
             "11. 【重置记录】：(管理员) 清空数据\n"
-            "12. 【重置强娶时间】：(管理员) 重置强娶冷却\n"
+            "12. 【重置次数】：(管理员) 重置强娶/斩红尘/点鸳鸯的次数\n"
             f"── 设置 ──\n"
             f"当前每日上限：{daily_limit}次\n"
         )
@@ -1155,19 +1155,35 @@ class AutumnBlazePlugin(Star):
         yield event.plain_result("今日抽取记录已重置！")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("重置强娶时间", alias={"czqqsj"})
-    async def reset_force_cd(self, event: AstrMessageEvent):
-        async for result in self._cmd_reset_force_cd(event):
+    @filter.command("重置次数", alias={"重置强娶时间", "czqqsj", "czcs"})
+    async def reset_counts(self, event: AstrMessageEvent):
+        async for result in self._cmd_reset_counts(event):
             yield result
 
-    async def _cmd_reset_force_cd(self, event: AstrMessageEvent):
+    async def _cmd_reset_counts(self, event: AstrMessageEvent):
         group_id = str(event.get_group_id())
-        if hasattr(self, "forced_records") and group_id in self.forced_records:
-            self.forced_records[group_id] = {}
-            save_json(self.forced_file, self.forced_records)
-            yield event.plain_result("✅ 本群强娶冷却时间已重置！")
-        else:
-            yield event.plain_result("💡 本群目前没有人在冷却期内。")
+        parts = str(event.message_str).strip().split(maxsplit=1)
+        type_map = {
+            "强娶": "force_marry", "qiangqu": "force_marry",
+            "斩红尘": "sever_ties", "zch": "sever_ties",
+            "点鸳鸯": "dian_yuanyang", "dyy": "dian_yuanyang",
+        }
+        if len(parts) < 2:
+            yield event.plain_result("请指定类型：强娶、斩红尘、点鸳鸯")
+            return
+        action = parts[1].strip()
+        target_type = type_map.get(action)
+        if not target_type:
+            yield event.plain_result(f"不支持的类型：{action}，可选：强娶、斩红尘、点鸳鸯")
+            return
+        group_records = self._get_group_records(group_id)
+        removed = [r for r in group_records if r.get("type") == target_type]
+        if not removed:
+            yield event.plain_result(f"💡 本群目前没有 {action} 的记录")
+            return
+        group_records[:] = [r for r in group_records if r.get("type") != target_type]
+        save_json(self.records_file, self.records)
+        yield event.plain_result(f"✅ 已重置 {action} 次数，清除 {len(removed)} 条记录")
 
     @filter.command("求婚", alias={"qh"})
     async def propose_command(self, event: AstrMessageEvent):
