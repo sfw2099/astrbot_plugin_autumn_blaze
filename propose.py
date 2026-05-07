@@ -209,5 +209,5 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
     yield event.chain_result([
         Comp.At(qq=proposer_id),
         Comp.Plain(f" 🎉 恭喜！{target_name} 接受了 {proposer_name} 的求婚！\n你们已正式结为夫妻❤️"),
-        Comp.Image.fromURL(couple_url),
+        Comp.Image.fromFileSystem(couple_url),
     ])

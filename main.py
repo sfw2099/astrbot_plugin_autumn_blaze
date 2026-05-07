@@ -582,7 +582,7 @@ class AutumnBlazePlugin(Star):
                 message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": grid_url}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
                 return
-            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromURL(grid_url)])
+            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(grid_url)])
             return
 
         # ---- 个人强娶 ----
@@ -670,7 +670,7 @@ class AutumnBlazePlugin(Star):
                 message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": grid_url}}])
                 if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
                 return
-            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromURL(grid_url)])
+            yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(grid_url)])
             return
 
         # 普通个人强娶成功
@@ -962,7 +962,7 @@ class AutumnBlazePlugin(Star):
             message_id = await self._send_onebot_message(event, message=[{"type": "at", "data": {"qq": user_id}}, {"type": "text", "data": {"text": text}}, {"type": "image", "data": {"file": couple_url}}])
             if message_id is not None: self._schedule_onebot_delete_msg(event.bot, message_id=message_id)
             return
-        yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromURL(couple_url)])
+        yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(couple_url)])
 
     # ==================== 关系图 ====================
 
