@@ -113,8 +113,6 @@ class ProfileManager:
     def can_propose(self, user_id: str) -> tuple[bool, int, str]:
         profile = self.get_profile(user_id)
         bond = profile.get("bond", 50)
-        if bond < 20:
-            return False, bond, "羁绊不足，尚不足以求婚。再试试吧~"
         return True, bond, ""
 
     def record_draw(self, user_id: str) -> dict:

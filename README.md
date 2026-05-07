@@ -166,7 +166,7 @@ git clone https://github.com/sfw2099/astrbot_plugin_autumn_blaze.git
 | 求婚成功（双方） | 各 **+5** |
 | 强娶/斩红尘/点鸳鸯 大失败 | **-5** |
 
-- 羁绊 < 20 时，禁止强娶、斩红尘、点鸳鸯、求婚
+- 羁绊 < 20 时，禁止强娶、斩红尘、点鸳鸯
 
 ---
 
