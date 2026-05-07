@@ -340,10 +340,12 @@ class AutumnBlazePlugin(Star):
         self._cleanup_inactive(group_id)
         daily_limit = self.config.get("daily_limit", 1)
         group_records = self._get_group_records(group_id)
+        profile = self._profile_manager.get_profile(user_id)
+        self._profile_manager.ensure_daily_reset(user_id, profile)
+        today_count = profile.get("wife_draw_count_today", 0)
         user_recs = [r for r in group_records if r["user_id"] == user_id and "type" not in r]
-        today_count = len(user_recs)
         if today_count >= daily_limit:
-            if daily_limit == 1:
+            if daily_limit == 1 and user_recs:
                 wife_record = user_recs[0]
                 wife_name, wife_id = wife_record["wife_name"], wife_record["wife_id"]
                 wife_avatar = f"https://q4.qlogo.cn/headimg_dl?dst_uin={wife_id}&spec=640"
