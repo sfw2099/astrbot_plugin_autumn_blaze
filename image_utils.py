@@ -43,6 +43,7 @@ def _round_corners(img: Image.Image, r: int) -> Image.Image:
 
 def _try_system_font(size: int) -> ImageFont.FreeTypeFont | None:
     paths = [
+        os.path.join(os.path.dirname(__file__), "HarmonyOS_Sans_SC.ttf"),
         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
