@@ -85,6 +85,7 @@ class AutumnBlazePlugin(Star):
             "propose_command": self.propose_command,
             "sever_ties": self._cmd_sever_ties,
             "dian_yuanyang": self._cmd_dian_yuanyang,
+            "swap_bonds": self._cmd_swap_bonds,
         }
         self._keyword_trigger_block_prefixes = ("/", "!", "！")
         logger.info(f"秋焰插件已加载。数据目录: {self.data_dir}")
@@ -966,6 +967,102 @@ class AutumnBlazePlugin(Star):
             return
         yield event.chain_result([Comp.At(qq=user_id), Comp.Plain(text), Comp.Image.fromFileSystem(couple_url)])
 
+    # ==================== 换连理 ====================
+
+    @filter.command("换连理", alias={"hll"})
+    async def swap_bonds(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_swap_bonds(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 换连理异常: {e}", exc_info=True)
+            yield event.plain_result(f"换连理出错了：{e}")
+
+    async def _cmd_swap_bonds(self, event: AstrMessageEvent):
+        if event.is_private_chat():
+            yield event.plain_result("此功能仅在群聊中可用哦~")
+            return
+        user_id = str(event.get_sender_id())
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+
+        swap_bonds_limit = self.config.get("swap_bonds_limit", 1)
+        profile = self._profile_manager.get_profile(user_id)
+        self._profile_manager.ensure_daily_reset(user_id, profile)
+
+        group_records = self._get_group_records(group_id)
+        swap_recs = [r for r in group_records if r["user_id"] == user_id and r.get("type") == "swap_bonds"]
+        swap_count = len(swap_recs)
+        if swap_count >= swap_bonds_limit:
+            yield event.plain_result(f"今日换连理次数已用完 ({swap_count}/{swap_bonds_limit})。")
+            return
+
+        target_id = extract_target_id_from_message(event)
+        if not target_id or target_id == user_id:
+            yield event.plain_result("请 @ 一位群友来进行换连理。")
+            return
+
+        cq_at = [c for c in event.message_obj.message if isinstance(c, Comp.At)]
+        if len(cq_at) > 1:
+            yield event.plain_result("一次只能与一个人换连理哦~")
+            return
+
+        self._get_profile(target_id)
+
+        result = self._profile_manager.can_swap_bonds(user_id, profile)
+        if result.get("blocked"):
+            yield event.plain_result("羁绊不足，无法换连理。")
+            return
+
+        dice_text = f"D100={result['roll']}/{result['skill']} {result['label']} (需极难成功)"
+        user_name = event.get_sender_name() or f"用户({user_id})"
+
+        if result.get("is_crit_fail"):
+            group_records.append({"user_id": user_id, "type": "swap_bonds", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self.records_file, self.records)
+            yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5，连理未换……")
+            return
+
+        if not result["success"]:
+            group_records.append({"user_id": user_id, "type": "swap_bonds", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self.records_file, self.records)
+            yield event.plain_result(f"换连理失败！{dice_text}\n未能交换羁绊……")
+            return
+
+        # Success: swap all bond connections between user and target
+        a, b = user_id, target_id
+        a_str, b_str = str(a), str(b)
+
+        for r in group_records:
+            if "type" in r:
+                continue
+            if r.get("user_id") == a_str:
+                r["user_id"] = b_str
+            elif r.get("user_id") == b_str:
+                r["user_id"] = a_str
+            if r.get("wife_id") == a_str:
+                r["wife_id"] = b_str
+            elif r.get("wife_id") == b_str:
+                r["wife_id"] = a_str
+
+        # Swap married_to in profiles
+        pa = self._profile_manager.get_profile(a_str)
+        pb = self._profile_manager.get_profile(b_str)
+        ma, mb = pa.get("married_to"), pb.get("married_to")
+        pa["married_to"] = mb
+        pb["married_to"] = ma
+        self._profile_manager.save_profile(a_str, pa)
+        self._profile_manager.save_profile(b_str, pb)
+
+        group_records.append({"user_id": user_id, "type": "swap_bonds", "success": True, "timestamp": datetime.now().isoformat()})
+        save_json(self.records_file, self.records)
+
+        crit_msg = "🌟 大成功！" if result.get("is_crit_success") else ""
+        suffix = f"\n剩余换连理次数：{max(0, swap_bonds_limit - swap_count - 1)}次"
+        yield event.plain_result(f"{crit_msg}🎭 {user_name} 与目标交换了所有羁绊！{dice_text}{suffix}")
+
     # ==================== 关系图 ====================
 
     @filter.command("关系图", alias={"gxt"})
@@ -1121,6 +1218,7 @@ class AutumnBlazePlugin(Star):
         max_modify = self.config.get("max_modify_attempts", 1)
         force_marry_limit = self.config.get("force_marry_limit", 1)
         sever_ties_limit = self.config.get("sever_ties_limit", 1)
+        swap_bonds_limit = self.config.get("swap_bonds_limit", 1)
         help_text = (
             "===== 秋焰插件 帮助 =====\n"
             "── 签到运势 ──\n"
@@ -1136,8 +1234,9 @@ class AutumnBlazePlugin(Star):
             "8. 【关系图】：查看群友老婆关系图\n"
             "9. 【求婚 @某人】：向对方发起求婚\n"
             "10. 【求婚】：不@任何人可向全体发起求婚\n"
-            "11. 【重置记录】：(管理员) 清空数据\n"
-            "12. 【重置次数】：(管理员) 重置强娶/斩红尘/点鸳鸯的次数\n"
+            "11. 【换连理 @某人】：COC判定交换所有羁绊连线（需极难成功）（每日{swap_bonds_limit}次）\n"
+            "12. 【重置记录】：(管理员) 清空数据\n"
+            "13. 【重置次数】：(管理员) 重置强娶/斩红尘/点鸳鸯的次数\n"
             f"── 设置 ──\n"
             f"当前每日上限：{daily_limit}次\n"
         )

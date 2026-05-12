@@ -35,6 +35,12 @@
         "hint": "每位用户每天可以点鸳鸯的最大次数。",
         "default": 1
     },
+    "swap_bonds_limit": {
+        "type": "int",
+        "description": "每日换连理次数上限",
+        "hint": "每位用户每天可以换连理的最大次数。",
+        "default": 1
+    },
     "max_records": {
         "type": "int",
         "description": "活跃群友记录上限",
