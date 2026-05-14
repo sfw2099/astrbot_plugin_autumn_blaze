@@ -196,7 +196,7 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
     ]
     group_records.extend(marriage_data)
 
-    save_json(plugin_instance.records_file, plugin_instance.records)
+    save_json(plugin_instance._today_records_path(), plugin_instance.records)
 
     proposer_key = proposer_id
     if group_id in propose_requests and proposer_key in propose_requests[group_id]:

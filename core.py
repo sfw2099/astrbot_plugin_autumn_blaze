@@ -1,6 +1,7 @@
 import asyncio
 import time
 import os
+import glob
 from datetime import datetime, timedelta
 from typing import Set
 
@@ -10,6 +11,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 
 from .onebot_api import extract_message_id
 from .utils import (
+    load_json,
     save_json,
     normalize_user_id_set,
     is_allowed_group,
@@ -70,7 +72,7 @@ def record_active(plugin, event) -> None:
     if group_key not in plugin.active_users:
         plugin.active_users[group_key] = {}
     plugin.active_users[group_key][user_id] = time.time()
-    save_json(plugin.active_file, plugin.active_users, plugin.records_file, plugin.config)
+    save_json(plugin.active_file, plugin.active_users, plugin._today_records_path(), plugin.config)
 
 
 def draw_excluded_users(plugin) -> Set[str]:
@@ -83,8 +85,11 @@ def force_marry_excluded_users(plugin) -> Set[str]:
 
 def ensure_today_records(plugin) -> None:
     today = datetime.now().strftime("%Y-%m-%d")
-    if plugin.records.get("date") != today:
+    today_path = plugin._today_records_path()
+    if not os.path.exists(today_path):
         plugin.records = {"date": today, "groups": {}}
+    elif plugin.records.get("date") != today:
+        plugin.records = load_json(today_path, {"date": today, "groups": {}})
 
 
 def get_group_records(plugin, group_id: str) -> list:

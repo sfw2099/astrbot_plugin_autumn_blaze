@@ -1,7 +1,7 @@
 import asyncio
 import os
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
@@ -59,14 +59,16 @@ class AutumnBlazePlugin(Star):
         self._withdraw_tasks: set[asyncio.Task] = set()
 
         self.data_dir = os.path.join(get_astrbot_plugin_data_path(), "autumn_blaze")
-        self.records_file = os.path.join(self.data_dir, "wife_records.json")
+        self.records_dir = os.path.join(self.data_dir, "records")
         self.active_file = os.path.join(self.data_dir, "active_users.json")
         self.forced_file = os.path.join(self.data_dir, "forced_marriage.json")
         self.profiles_dir = os.path.join(self.data_dir, "profiles")
 
         os.makedirs(self.data_dir, exist_ok=True)
+        os.makedirs(self.records_dir, exist_ok=True)
 
-        self.records = load_json(self.records_file, {"date": "", "groups": {}})
+        self.records = load_json(self._today_records_path(), {"date": datetime.now().strftime("%Y-%m-%d"), "groups": {}})
+        self._cleanup_old_records()
         self.active_users = load_json(self.active_file, {})
         self.forced_records = load_json(self.forced_file, {})
 
@@ -90,6 +92,26 @@ class AutumnBlazePlugin(Star):
         }
         self._keyword_trigger_block_prefixes = ("/", "!", "！")
         logger.info(f"秋焰插件已加载。数据目录: {self.data_dir}")
+
+    def _today_records_path(self) -> str:
+        today = datetime.now().strftime("%Y-%m-%d")
+        return os.path.join(self.records_dir, f"{today}.json")
+
+    def _records_path_for_date(self, date_str: str) -> str:
+        return os.path.join(self.records_dir, f"{date_str}.json")
+
+    def _cleanup_old_records(self):
+        cutoff = datetime.now() - timedelta(days=30)
+        for f in os.listdir(self.records_dir):
+            if not f.endswith(".json"):
+                continue
+            date_str = f[:-5]
+            try:
+                file_date = datetime.strptime(date_str, "%Y-%m-%d")
+                if file_date < cutoff:
+                    os.remove(os.path.join(self.records_dir, f))
+            except ValueError:
+                continue
 
     def _get_profile(self, user_id: str) -> dict:
         return self._profile_manager.get_profile(user_id)
@@ -420,7 +442,7 @@ class AutumnBlazePlugin(Star):
             wife_id=wife_id, wife_name=wife_name,
             enabled=self._auto_set_other_half_enabled(), timestamp=timestamp,
         )
-        save_json(self.records_file, self.records)
+        save_json(self._today_records_path(), self.records)
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={wife_id}&spec=640"
         suffix_text = f"\n请好好对待她哦❤️~\n剩余抽取次数：{max(0, daily_limit - today_count - 1)}次"
         at_waifu_enabled = self.config.get("at_waifu", False)
@@ -456,11 +478,7 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result("此功能在当前群聊不可用。")
             return
         user_id = str(event.get_sender_id())
-        today = datetime.now().strftime("%Y-%m-%d")
-        if self.records.get("date") != today:
-            yield event.plain_result("你今天还没有抽过老婆哦~")
-            return
-        group_recs = self.records.get("groups", {}).get(group_id, {}).get("records", [])
+        group_recs = self._get_group_records(group_id)
         user_recs = [r for r in group_recs if r["user_id"] == user_id and "type" not in r and "wife_name" in r]
         if not user_recs:
             yield event.plain_result("你今天还没有抽过老婆哦~")
@@ -527,7 +545,7 @@ class AutumnBlazePlugin(Star):
             dice_text = f"D100={result['roll']}/{result['skill']} {result['label']} (需大成功)"
             if not result["success"]:
                 group_records.append({"user_id": user_id, "type": "force_marry", "success": False, "timestamp": datetime.now().isoformat()})
-                save_json(self.records_file, self.records)
+                save_json(self._today_records_path(), self.records)
                 if result.get("is_crit_fail"):
                     yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
                     return
@@ -577,7 +595,7 @@ class AutumnBlazePlugin(Star):
                 new_count += 1
                 new_qqs.append(t_id)
             group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             force_count_after = len([r for r in group_records if r["user_id"] == user_id and r.get("type") == "force_marry"])
             suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count_after)}次"
             text = f"🌟 大成功！{dice_text}\n全体强娶成功！后宫+{new_count}位群友~{suffix}"
@@ -610,13 +628,13 @@ class AutumnBlazePlugin(Star):
         # 大失败
         if result.get("is_crit_fail"):
             group_records.append({"user_id": user_id, "type": "force_marry", "success": False, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
             return
 
         if not result["success"]:
             group_records.append({"user_id": user_id, "type": "force_marry", "success": False, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"强娶失败！{dice_text}\n目标羁绊 {target_bond}，需要 {req}")
             return
 
@@ -665,7 +683,7 @@ class AutumnBlazePlugin(Star):
                 new_count += 1
                 new_qqs.append(t_id)
             group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             force_count_after = len([r for r in group_records if r["user_id"] == user_id and r.get("type") == "force_marry"])
             suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count_after)}次"
             text = f"🎲 大成功触发全体强娶！{dice_text}\n后宫+{new_count}位群友~{suffix}"
@@ -699,7 +717,7 @@ class AutumnBlazePlugin(Star):
         group_records.append({"user_id": user_id, "wife_id": target_id, "wife_name": target_name, "timestamp": timestamp, "forced": True})
         maybe_add_other_half_record(records=group_records, user_id=user_id, user_name=user_name, wife_id=target_id, wife_name=target_name, enabled=self._auto_set_other_half_enabled(), timestamp=timestamp)
         group_records.append({"user_id": user_id, "type": "force_marry", "success": True, "timestamp": datetime.now().isoformat()})
-        save_json(self.records_file, self.records)
+        save_json(self._today_records_path(), self.records)
         avatar_url = f"https://q4.qlogo.cn/headimg_dl?dst_uin={target_id}&spec=640"
         suffix = f"\n剩余强娶次数：{max(0, force_marry_limit - force_count - 1)}次"
         text = f"强娶成功！{dice_text}\n娶到了【{target_name}】！{suffix}"
@@ -760,7 +778,7 @@ class AutumnBlazePlugin(Star):
         if not target_recs:
             count_msg = f"你今日没有任何红尘羁绊可斩。" if not has_target else f"用户({target_uid})今日没有任何红尘羁绊可斩。"
             group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(count_msg)
             return
 
@@ -777,13 +795,13 @@ class AutumnBlazePlugin(Star):
 
         if result.get("is_crit_fail"):
             group_records.append({"user_id": user_id, "type": "sever_ties", "success": False, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5")
             return
 
         if not result["success"]:
             group_records.append({"user_id": user_id, "type": "sever_ties", "success": False, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"斩红尘失败！{dice_text}\n红尘羁绊，岂是轻易可斩……")
             return
 
@@ -791,7 +809,7 @@ class AutumnBlazePlugin(Star):
             n = len([r for r in group_records if "type" not in r])
             group_records[:] = [r for r in group_records if "type" in r]
             group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"🌟 大成功！{dice_text}\n{user_name} 一剑斩断全群红尘！已清除本群所有羁绊连线（共 {n} 条）。")
             return
 
@@ -808,14 +826,14 @@ class AutumnBlazePlugin(Star):
             n = len(target_recs)
             group_records[:] = [r for r in group_records if (r["user_id"] != target_uid and r.get("wife_id") != target_uid) or "type" in r]
             group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"⚔️ {user_name} 挥剑斩断 {target_name} 的红尘！{dice_text}\n已清除 {target_name} 今日所有羁绊连线（共 {n} 条）。")
             return
 
         n = len(target_recs)
         group_records[:] = [r for r in group_records if (r["user_id"] != user_id and r.get("wife_id") != user_id) or "type" in r]
         group_records.append({"user_id": user_id, "type": "sever_ties", "success": True, "timestamp": datetime.now().isoformat()})
-        save_json(self.records_file, self.records)
+        save_json(self._today_records_path(), self.records)
         yield event.plain_result(f"⚔️ {user_name} 斩断红尘！{dice_text}\n已清除你今日所有羁绊连线（共 {n} 条）。")
 
     # ==================== 点鸳鸯 ====================
@@ -931,13 +949,13 @@ class AutumnBlazePlugin(Star):
 
         if result.get("is_crit_fail"):
             group_records.append({"user_id": user_id, "type": "dian_yuanyang", "success": False, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5，红绳断裂……")
             return
 
         if not result["success"]:
             group_records.append({"user_id": user_id, "type": "dian_yuanyang", "success": False, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"牵线失败！{dice_text}\n红线不够牢，缘分尚未到……")
             return
 
@@ -955,7 +973,7 @@ class AutumnBlazePlugin(Star):
             p["married_to"] = other
             self._profile_manager.save_profile(uid, p)
 
-        save_json(self.records_file, self.records)
+        save_json(self._today_records_path(), self.records)
 
         couple_url = await render_couple(self, target_a, target_b, target_a_name, target_b_name)
 
@@ -1022,13 +1040,13 @@ class AutumnBlazePlugin(Star):
 
         if result.get("is_crit_fail"):
             group_records.append({"user_id": user_id, "type": "swap_bonds", "success": False, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5，连理未换……")
             return
 
         if not result["success"]:
             group_records.append({"user_id": user_id, "type": "swap_bonds", "success": False, "timestamp": datetime.now().isoformat()})
-            save_json(self.records_file, self.records)
+            save_json(self._today_records_path(), self.records)
             yield event.plain_result(f"换连理失败！{dice_text}\n未能交换羁绊……")
             return
 
@@ -1058,7 +1076,7 @@ class AutumnBlazePlugin(Star):
         self._profile_manager.save_profile(b_str, pb)
 
         group_records.append({"user_id": user_id, "type": "swap_bonds", "success": True, "timestamp": datetime.now().isoformat()})
-        save_json(self.records_file, self.records)
+        save_json(self._today_records_path(), self.records)
 
         crit_msg = "🌟 大成功！" if result.get("is_crit_success") else ""
         suffix = f"\n剩余换连理次数：{max(0, swap_bonds_limit - swap_count - 1)}次"
@@ -1126,7 +1144,7 @@ class AutumnBlazePlugin(Star):
         self._profile_manager.save_profile(target_id, target_p)
 
         group_records.append({"user_id": user_id, "type": "give_fortune", "success": True, "timestamp": datetime.now().isoformat()})
-        save_json(self.records_file, self.records)
+        save_json(self._today_records_path(), self.records)
 
         user_name = event.get_sender_name() or f"用户({user_id})"
         target_name = f"用户({target_id})"
@@ -1171,6 +1189,31 @@ class AutumnBlazePlugin(Star):
         if not is_allowed_group(group_id, self.config):
             yield event.plain_result("此功能在当前群聊不可用。")
             return
+
+        # Parse days_ago from message (e.g. "/关系图 1" → 1 day ago)
+        msg = event.message_str.strip()
+        parts = msg.split()
+        days_ago = 0
+        if len(parts) >= 2:
+            try:
+                days_ago = max(0, int(parts[1]))
+            except ValueError:
+                pass
+
+        target_date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+        target_path = self._records_path_for_date(target_date)
+
+        if not os.path.exists(target_path):
+            if days_ago == 0:
+                yield event.plain_result("今天还没有任何记录哦~")
+            else:
+                yield event.plain_result(f"{target_date} 没有找到记录。")
+            return
+
+        records_data = load_json(target_path, {})
+        group_data = records_data.get("groups", {}).get(group_id, {}).get("records", [])
+
+        date_label = "今日" if days_ago == 0 else target_date
         iter_count = self.config.get("iterations", 140)
         vis_js_path = os.path.join(self.curr_dir, "vis-network.min.js")
         vis_js_content = ""
@@ -1185,7 +1228,6 @@ class AutumnBlazePlugin(Star):
             return
         with open(template_path, "r", encoding="utf-8") as f:
             graph_html = f.read()
-        group_data = self.records.get("groups", {}).get(group_id, {}).get("records", [])
         group_data = [r for r in group_data if "type" not in r]
         group_name = "未命名群聊"
         user_map = {}
@@ -1195,6 +1237,8 @@ class AutumnBlazePlugin(Star):
                 if isinstance(info, dict) and "data" in info and isinstance(info["data"], dict):
                     info = info["data"]
                 group_name = info.get("group_name", "未命名群聊")
+                if days_ago > 0:
+                    group_name = f"{group_name} ({target_date})"
                 members = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
                 if isinstance(members, dict) and "data" in members and isinstance(members["data"], list):
                     members = members["data"]
@@ -1339,7 +1383,7 @@ class AutumnBlazePlugin(Star):
 
     async def _cmd_reset_records(self, event: AstrMessageEvent):
         self.records = {"date": datetime.now().strftime("%Y-%m-%d"), "groups": {}}
-        save_json(self.records_file, self.records)
+        save_json(self._today_records_path(), self.records)
         yield event.plain_result("今日抽取记录已重置！")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -1370,7 +1414,7 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result(f"💡 本群目前没有 {action} 的记录")
             return
         group_records[:] = [r for r in group_records if r.get("type") != target_type]
-        save_json(self.records_file, self.records)
+        save_json(self._today_records_path(), self.records)
         yield event.plain_result(f"✅ 已重置 {action} 次数，清除 {len(removed)} 条记录")
 
     @filter.command("求婚", alias={"qh"})
