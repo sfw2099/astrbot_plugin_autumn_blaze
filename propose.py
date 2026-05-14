@@ -100,7 +100,7 @@ async def cmd_propose(plugin_instance, event: AstrMessageEvent):
                 from astrbot.api import logger
                 logger.error(f"[propose] 发送超时提醒失败: {e}")
 
-            del propose_requests[group_id][user_id]
+            propose_requests.get(group_id, {}).pop(user_id, None)
 
 
 async def handle_propose_response(plugin_instance, event: AstrMessageEvent):
@@ -120,7 +120,7 @@ async def handle_propose_response(plugin_instance, event: AstrMessageEvent):
     all_matches = []
     for proposer_id, req in list(propose_requests[group_id].items()):
         if now > req.get("expire", 0):
-            del propose_requests[group_id][proposer_id]
+            propose_requests.get(group_id, {}).pop(proposer_id, None)
             continue
         if req.get("target_id") == user_id and not req.get("is_all_target"):
             target_matches.append((proposer_id, req))
@@ -200,7 +200,7 @@ async def _accept_proposal(plugin_instance, event, group_id, accepter_id, req):
 
     proposer_key = proposer_id
     if group_id in propose_requests and proposer_key in propose_requests[group_id]:
-        del propose_requests[group_id][proposer_key]
+        propose_requests.get(group_id, {}).pop(proposer_key, None)
 
     event.stop_event()
 
