@@ -34,4 +34,7 @@ _DEFAULT_KEYWORD_ROUTES: tuple[KeywordRoute, ...] = (
 
     KeywordRoute(keyword="换连理", action="swap_bonds"),
     KeywordRoute(keyword="hll", action="swap_bonds"),
+
+    KeywordRoute(keyword="赠予运势", action="give_fortune"),
+    KeywordRoute(keyword="zyys", action="give_fortune"),
 )

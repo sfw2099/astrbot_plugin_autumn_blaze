@@ -86,6 +86,7 @@ class AutumnBlazePlugin(Star):
             "sever_ties": self._cmd_sever_ties,
             "dian_yuanyang": self._cmd_dian_yuanyang,
             "swap_bonds": self._cmd_swap_bonds,
+            "give_fortune": self._cmd_give_fortune,
         }
         self._keyword_trigger_block_prefixes = ("/", "!", "！")
         logger.info(f"秋焰插件已加载。数据目录: {self.data_dir}")
@@ -1062,6 +1063,75 @@ class AutumnBlazePlugin(Star):
         crit_msg = "🌟 大成功！" if result.get("is_crit_success") else ""
         suffix = f"\n剩余换连理次数：{max(0, swap_bonds_limit - swap_count - 1)}次"
         yield event.plain_result(f"{crit_msg}🎭 {user_name} 与目标交换了所有羁绊！{dice_text}{suffix}")
+
+    # ==================== 赠予运势 ====================
+
+    @filter.command("赠予运势", alias={"zyys"})
+    async def give_fortune(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_give_fortune(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 赠予运势异常: {e}", exc_info=True)
+            yield event.plain_result(f"赠予运势出错了：{e}")
+
+    async def _cmd_give_fortune(self, event: AstrMessageEvent):
+        if event.is_private_chat():
+            yield event.plain_result("此功能仅在群聊中可用哦~")
+            return
+        user_id = str(event.get_sender_id())
+        if not is_allowed_group(str(event.get_group_id()), self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+
+        target_id = extract_target_id_from_message(event)
+        if not target_id or target_id == user_id:
+            yield event.plain_result("请 @ 一位群友来赠予运势。")
+            return
+
+        cq_at = [c for c in event.message_obj.message if isinstance(c, Comp.At)]
+        if len(cq_at) > 1:
+            yield event.plain_result("一次只能赠予一位群友哦~")
+            return
+
+        my_fortune = self._profile_manager.get_fortune(user_id)
+        target_fortune = self._profile_manager.get_fortune(target_id)
+
+        if my_fortune is None:
+            yield event.plain_result("你今天还没有签到获取运势，无法赠予。")
+            return
+        if target_fortune is None:
+            yield event.plain_result("对方今天还没有签到获取运势，无法赠予。")
+            return
+
+        if my_fortune <= target_fortune:
+            yield event.plain_result(f"你的运势（{my_fortune}）不大于对方的运势（{target_fortune}），无法赠予。")
+            return
+
+        avg = (my_fortune + target_fortune) // 2
+        self._profile_manager.set_fortune(user_id, avg)
+        self._profile_manager.set_fortune(target_id, avg)
+
+        user_name = event.get_sender_name() or f"用户({user_id})"
+        target_name = f"用户({target_id})"
+        try:
+            if event.get_platform_name() == "aiocqhttp":
+                members = await event.bot.api.call_action("get_group_member_list", group_id=int(event.get_group_id()))
+                if isinstance(members, dict) and "data" in members:
+                    members = members["data"]
+                for m in members:
+                    uid = str(m.get("user_id"))
+                    if uid == user_id:
+                        user_name = m.get("card") or m.get("nickname") or user_name
+                    if uid == target_id:
+                        target_name = m.get("card") or m.get("nickname") or target_name
+        except Exception:
+            pass
+
+        yield event.plain_result(
+            f"🎁 {user_name} 赠予了 {target_name} 运势！\n"
+            f"双方运势已平均为：{avg}"
+        )
 
     # ==================== 关系图 ====================
 
