@@ -17,7 +17,7 @@ from .keyword_trigger import KeywordRouter, MatchMode
 from .onebot_api import extract_message_id
 from .waifu_relations import maybe_add_other_half_record
 from .image_utils import render_couple, render_grid
-from .profiles import ProfileManager
+from .profiles import ProfileManager, _clamp
 from .propose import cmd_propose, handle_propose_response
 
 from .constants import _DEFAULT_KEYWORD_ROUTES
@@ -1108,9 +1108,25 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result(f"你的运势（{my_fortune}）不大于对方的运势（{target_fortune}），无法赠予。")
             return
 
+        group_records = self._get_group_records(str(event.get_group_id()))
+        if any(r["user_id"] == user_id and r.get("type") == "give_fortune" for r in group_records):
+            yield event.plain_result("你今天已经赠予过运势了，每日只能赠予一次哦~")
+            return
+
         avg = (my_fortune + target_fortune) // 2
         self._profile_manager.set_fortune(user_id, avg)
         self._profile_manager.set_fortune(target_id, avg)
+
+        # Bond +5 for both
+        my_p = self._profile_manager.get_profile(user_id)
+        target_p = self._profile_manager.get_profile(target_id)
+        my_p["bond"] = _clamp(my_p.get("bond", 50) + 5)
+        target_p["bond"] = _clamp(target_p.get("bond", 50) + 5)
+        self._profile_manager.save_profile(user_id, my_p)
+        self._profile_manager.save_profile(target_id, target_p)
+
+        group_records.append({"user_id": user_id, "type": "give_fortune", "success": True, "timestamp": datetime.now().isoformat()})
+        save_json(self.records_file, self.records)
 
         user_name = event.get_sender_name() or f"用户({user_id})"
         target_name = f"用户({target_id})"
@@ -1130,7 +1146,8 @@ class AutumnBlazePlugin(Star):
 
         yield event.plain_result(
             f"🎁 {user_name} 赠予了 {target_name} 运势！\n"
-            f"双方运势已平均为：{avg}"
+            f"双方运势已平均为：{avg}\n"
+            f"双方羁绊值 +5"
         )
 
     # ==================== 关系图 ====================
