@@ -68,6 +68,7 @@ class AutumnBlazePlugin(Star):
         os.makedirs(self.records_dir, exist_ok=True)
 
         self.records = load_json(self._today_records_path(), {"date": datetime.now().strftime("%Y-%m-%d"), "groups": {}})
+        self._migrate_old_records()
         self._cleanup_old_records()
         self.active_users = load_json(self.active_file, {})
         self.forced_records = load_json(self.forced_file, {})
@@ -112,6 +113,22 @@ class AutumnBlazePlugin(Star):
                     os.remove(os.path.join(self.records_dir, f))
             except ValueError:
                 continue
+
+    def _migrate_old_records(self):
+        old_path = os.path.join(self.data_dir, "wife_records.json")
+        if not os.path.exists(old_path):
+            return
+        try:
+            data = load_json(old_path, {})
+            date_str = data.get("date") if isinstance(data, dict) else None
+            if date_str:
+                target = self._records_path_for_date(date_str)
+                if not os.path.exists(target):
+                    save_json(target, data)
+            os.rename(old_path, old_path + ".bak")
+            logger.info(f"已将旧记录 wife_records.json 迁移至 records/{date_str}.json")
+        except Exception as e:
+            logger.error(f"迁移旧记录失败: {e}")
 
     def _get_profile(self, user_id: str) -> dict:
         return self._profile_manager.get_profile(user_id)
