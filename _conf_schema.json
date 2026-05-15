@@ -41,6 +41,12 @@
         "hint": "每位用户每天可以换连理的最大次数。",
         "default": 1
     },
+    "recall_past_limit": {
+        "type": "int",
+        "description": "每日忆前世次数上限",
+        "hint": "每位用户每天可以忆前世的的最大次数。",
+        "default": 1
+    },
     "max_records": {
         "type": "int",
         "description": "活跃群友记录上限",

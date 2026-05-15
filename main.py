@@ -90,6 +90,7 @@ class AutumnBlazePlugin(Star):
             "dian_yuanyang": self._cmd_dian_yuanyang,
             "swap_bonds": self._cmd_swap_bonds,
             "give_fortune": self._cmd_give_fortune,
+            "recall_past": self._cmd_recall_past,
         }
         self._keyword_trigger_block_prefixes = ("/", "!", "！")
         logger.info(f"秋焰插件已加载。数据目录: {self.data_dir}")
@@ -1184,6 +1185,120 @@ class AutumnBlazePlugin(Star):
             f"双方运势已平均为：{avg}\n"
             f"双方羁绊值 +5"
         )
+
+    # ==================== 忆前世 ====================
+
+    @filter.command("忆前世", alias={"ysq"})
+    async def recall_past(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_recall_past(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 忆前世异常: {e}", exc_info=True)
+            yield event.plain_result(f"忆前世出错了：{e}")
+
+    async def _cmd_recall_past(self, event: AstrMessageEvent):
+        if event.is_private_chat():
+            yield event.plain_result("此功能仅在群聊中可用哦~")
+            return
+        user_id = str(event.get_sender_id())
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+
+        recall_past_limit = self.config.get("recall_past_limit", 1)
+        profile = self._profile_manager.get_profile(user_id)
+        self._profile_manager.ensure_daily_reset(user_id, profile)
+
+        group_records = self._get_group_records(group_id)
+        recall_recs = [r for r in group_records if r["user_id"] == user_id and r.get("type") == "recall_past"]
+        if len(recall_recs) >= recall_past_limit:
+            yield event.plain_result(f"今日忆前世次数已用完 ({len(recall_recs)}/{recall_past_limit})。")
+            return
+
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday_path = self._records_path_for_date(yesterday)
+        if not os.path.exists(yesterday_path):
+            yield event.plain_result("昨日没有记录，无法忆前世。")
+            return
+
+        from .utils import load_json
+        yesterday_data = load_json(yesterday_path, {})
+        yesterday_recs = yesterday_data.get("groups", {}).get(group_id, {}).get("records", [])
+        yesterday_recs = [r for r in yesterday_recs if "type" not in r and "wife_name" in r]
+
+        target_id = extract_target_id_from_message(event)
+        if target_id and target_id != user_id:
+            cq_at = [c for c in event.message_obj.message if isinstance(c, Comp.At)]
+            if len(cq_at) > 1:
+                yield event.plain_result("一次只能忆一位群友的前世哦~")
+                return
+            # Check shared bonds yesterday
+            shared = [r for r in yesterday_recs
+                      if (r["user_id"] == user_id and r["wife_id"] == target_id)
+                      or (r["user_id"] == target_id and r["wife_id"] == user_id)]
+            if not shared:
+                yield event.plain_result("昨日你二人并无羁绊，无法忆前世。")
+                return
+            require_hard = False
+        else:
+            target_id = None
+            # Check if user has any bonds yesterday
+            my_yesterday = [r for r in yesterday_recs if r["user_id"] == user_id]
+            if not my_yesterday:
+                yield event.plain_result("昨日你没有羁绊记录，无法忆前世。")
+                return
+            require_hard = True
+
+        result = self._profile_manager.can_recall_past(user_id, profile, require_hard=require_hard)
+        if result.get("blocked"):
+            yield event.plain_result("羁绊不足，无法忆前世。")
+            return
+
+        dice_text = f"D100={result['roll']}/{result['skill']} {result['label']} (需{'困难成功' if require_hard else '常规成功'})"
+        user_name = event.get_sender_name() or f"用户({user_id})"
+
+        if result.get("is_crit_fail"):
+            group_records.append({"user_id": user_id, "type": "recall_past", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self._today_records_path(), self.records)
+            yield event.plain_result(f"💀 大失败！{dice_text}\n羁绊 -5，前世记忆未能唤醒……")
+            return
+
+        if not result["success"]:
+            group_records.append({"user_id": user_id, "type": "recall_past", "success": False, "timestamp": datetime.now().isoformat()})
+            save_json(self._today_records_path(), self.records)
+            yield event.plain_result(f"忆前世失败！{dice_text}\n未能追忆过往的羁绊……")
+            return
+
+        # Success: copy bonds
+        timestamp = datetime.now().isoformat()
+        copied = 0
+
+        if target_id:
+            candidates = [r for r in yesterday_recs
+                          if (r["user_id"] == user_id and r["wife_id"] == target_id)
+                          or (r["user_id"] == target_id and r["wife_id"] == user_id)]
+        else:
+            candidates = [r for r in yesterday_recs if r["user_id"] == user_id]
+
+        existing_pairs = {(r["user_id"], r.get("wife_id")) for r in group_records if "type" not in r}
+        for r in candidates:
+            pair = (r["user_id"], r.get("wife_id"))
+            if pair not in existing_pairs:
+                new_r = dict(r)
+                new_r["timestamp"] = timestamp
+                group_records.append(new_r)
+                existing_pairs.add(pair)
+                copied += 1
+
+        group_records.append({"user_id": user_id, "type": "recall_past", "success": True, "timestamp": timestamp})
+        save_json(self._today_records_path(), self.records)
+
+        crit_msg = "🌟 大成功！" if result.get("is_crit_success") else ""
+        suffix = f"\n剩余忆前世次数：{max(0, recall_past_limit - len(recall_recs) - 1)}次"
+        mode = f"与【{target_id}】的共同羁绊" if target_id else "所有羁绊"
+        yield event.plain_result(f"{crit_msg}🕰 {user_name} 忆起了前世的{mode}！{dice_text}\n已追忆 {copied} 条连线{suffix}")
 
     # ==================== 关系图 ====================
 
