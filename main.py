@@ -1482,6 +1482,7 @@ class AutumnBlazePlugin(Star):
         force_marry_limit = self.config.get("force_marry_limit", 1)
         sever_ties_limit = self.config.get("sever_ties_limit", 1)
         swap_bonds_limit = self.config.get("swap_bonds_limit", 1)
+        recall_past_limit = self.config.get("recall_past_limit", 1)
         help_text = (
             "===== 秋焰插件 帮助 =====\n"
             "── 签到运势 ──\n"
@@ -1494,12 +1495,18 @@ class AutumnBlazePlugin(Star):
             f"6. 【斩红尘】：COC判定斩断羁绊连线（每日{sever_ties_limit}次）\n"
             "    【斩红尘 @某人】：斩断指定用户的连线\n"
             "7. 【我的老婆】：查看今日历史与次数\n"
-            "8. 【关系图】：查看群友老婆关系图\n"
+            "8. 【关系图 N】：查看群友老婆关系图（N=天数，如 1 为昨天）\n"
             "9. 【求婚 @某人】：向对方发起求婚\n"
             "10. 【求婚】：不@任何人可向全体发起求婚\n"
-            "11. 【换连理 @某人】：COC判定交换所有羁绊连线（需极难成功）（每日{swap_bonds_limit}次）\n"
-            "12. 【重置记录】：(管理员) 清空数据\n"
-            "13. 【重置次数】：(管理员) 重置强娶/斩红尘/点鸳鸯的次数\n"
+            f"11. 【换连理 @某人】：COC判定交换所有羁绊连线（需极难成功）（每日{swap_bonds_limit}次）\n"
+            "── 羁绊 ──\n"
+            "12. 【点鸳鸯 @A @B】：COC判定为两人牵线（需困难成功）\n"
+            "13. 【赠予运势 @某人】：己方运势大于对方时平均双方运势，羁绊+5（每日1次）\n"
+            f"14. 【忆前世 @某人】：追忆昨日共同羁绊（需常规成功）（每日{recall_past_limit}次）\n"
+            "    【忆前世】：追忆自己昨日所有羁绊（需困难成功）\n"
+            "── 管理 ──\n"
+            "15. 【重置记录】：(管理员) 清空今日数据\n"
+            "16. 【重置次数】：(管理员) 重置强娶/斩红尘/点鸳鸯的次数\n"
             f"── 设置 ──\n"
             f"当前每日上限：{daily_limit}次\n"
         )

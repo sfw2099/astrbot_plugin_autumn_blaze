@@ -1,10 +1,10 @@
 # 🍂 AstrBot 秋焰插件 (autumn_blaze)
 
-![Version](https://img.shields.io/badge/version-v1.6.7-blue)
+![Version](https://img.shields.io/badge/version-v1.7.3-blue)
 ![Python](https://img.shields.io/badge/python-3.10%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
-融合 **每日签到运势** + **抽老婆/强娶/求婚/点鸳鸯** + **群友羁绊档案系统** 的 AstrBot 综合插件。采用 COC (克苏鲁的呼唤) d100 骰子判定系统。
+融合 **每日签到运势** + **抽老婆/强娶/求婚/点鸳鸯/换连理/忆前世** + **群友羁绊档案系统** 的 AstrBot 综合插件。采用 COC (克苏鲁的呼唤) d100 骰子判定系统。
 
 ---
 
@@ -44,12 +44,17 @@ git clone https://github.com/sfw2099/astrbot_plugin_autumn_blaze.git
 | `/点鸳鸯` | 随机撮合两位群友 |
 | `/斩红尘 @某人` | COC d100 判定，困难成功可斩断羁绊 |
 | `/斩红尘` | 斩断自己今日所有羁绊 |
+| `/换连理 @某人` | COC d100 判定，极难成功交换所有羁绊连线 |
+| `/赠予运势 @某人` | 己方运势大于对方时平均双方运势，羁绊+5 |
+| `/忆前世 @某人` | 追忆昨日二人共同羁绊（常规成功） |
+| `/忆前世` | 追忆自己昨日所有羁绊（困难成功） |
 
 ### 查询 / 图谱
 | 指令 | 说明 |
 |------|------|
 | `/我的老婆` / `/抽取历史` | 查看今日已抽取的老婆记录 |
-| `/关系图` / `gxt` | 生成群友老婆关系可视化图谱 |
+| `/关系图` / `gxt` | 生成群友老婆关系可视化图谱（今日） |
+| `/关系图 N` | 查看 N 天前的关系图（如 `/关系图 1` 为昨天） |
 | `/个人关系图` / `grgxt` | 生成以自己为中心的专属关系图谱 |
 
 ### 管理命令
@@ -144,6 +149,30 @@ git clone https://github.com/sfw2099/astrbot_plugin_autumn_blaze.git
 
 技能值 = 羁绊值 + 运势值 / 3
 
+### 忆前世判定
+
+| 用法 | 判定需求 |
+|------|---------|
+| `/忆前世 @某人` | **常规成功**（roll ≤ 技能值），需昨日二人有共同连线 |
+| `/忆前世`（无艾特） | **困难成功**（roll ≤ 技能值/2），需昨日自己有连线 |
+
+| 判定 | 效果 |
+|------|------|
+| 大成功 | 羁绊 +10，成功复制连线 |
+| 困难/常规成功 | 成功复制昨日连线到今日 |
+| 大失败 | 羁绊 -5，复制失败 |
+
+技能值 = 羁绊值 + 运势值 / 3
+
+### 换连理判定
+
+| 判定 | 条件 | 效果 |
+|------|------|------|
+| 大成功 | roll ≤ 5 | 交换成功 + 羁绊 +10 |
+| 极难成功 | roll ≤ 技能值/5 | 交换所有羁绊连线 |
+| 其他 | - | 失败 |
+| 大失败 | roll ≥ 96 | 失败，羁绊 -5 |
+
 ---
 
 ## 羁绊值系统
@@ -163,10 +192,13 @@ git clone https://github.com/sfw2099/astrbot_plugin_autumn_blaze.git
 | 强娶大成功 | **+10** |
 | 斩红尘大成功 | **+10** |
 | 点鸳鸯大成功 | **+10** |
+| 换连理大成功 | **+10** |
+| 忆前世大成功 | **+10** |
 | 求婚成功（双方） | 各 **+5** |
-| 强娶/斩红尘/点鸳鸯 大失败 | **-5** |
+| 赠予运势成功（双方） | 各 **+5** |
+| 强娶/斩红尘/点鸳鸯/换连理/忆前世 大失败 | **-5** |
 
-- 羁绊 < 20 时，禁止强娶、斩红尘、点鸳鸯
+- 羁绊 < 20 时，禁止强娶、斩红尘、点鸳鸯、换连理、忆前世
 
 ---
 
@@ -182,6 +214,8 @@ git clone https://github.com/sfw2099/astrbot_plugin_autumn_blaze.git
 | `force_marry_limit` | int | 1 | 每日强娶次数上限 |
 | `sever_ties_limit` | int | 1 | 每日斩红尘次数上限 |
 | `dian_yuanyang_limit` | int | 1 | 每日点鸳鸯次数上限 |
+| `swap_bonds_limit` | int | 1 | 每日换连理次数上限 |
+| `recall_past_limit` | int | 1 | 每日忆前世次数上限 |
 | `max_records` | int | 500 | 活跃群友记录上限 |
 | `excluded_users` | list | [] | 排除用户列表（不会被抽中） |
 | `force_marry_excluded_users` | list | [] | 强娶排除用户列表 |
@@ -204,7 +238,8 @@ git clone https://github.com/sfw2099/astrbot_plugin_autumn_blaze.git
 
 | 文件 | 说明 |
 |------|------|
-| `wife_records.json` | 每日关系记录 |
+| `records/{日期}.json` | 每日关系记录（按天分文件，保留30天） |
+| `records/2026-05-14.json` | 今日数据示例 |
 | `active_users.json` | 活跃用户池 |
 | `profiles/{uid}.json` | 每位群友的羁绊值档案 |
 | `temp/` | 合并图像缓存 |
