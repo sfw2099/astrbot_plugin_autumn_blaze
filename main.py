@@ -1150,8 +1150,10 @@ class AutumnBlazePlugin(Star):
             return
 
         avg = (my_fortune + target_fortune) // 2
-        self._profile_manager.set_fortune(user_id, avg)
-        self._profile_manager.set_fortune(target_id, avg)
+        my_profile = self._profile_manager.get_profile(user_id)
+        tg_profile = self._profile_manager.get_profile(target_id)
+        self._profile_manager.set_fortune(user_id, avg, modifications=my_profile.get("modifications_left", 0))
+        self._profile_manager.set_fortune(target_id, avg, modifications=tg_profile.get("modifications_left", 0))
 
         # Bond +5 for both
         my_p = self._profile_manager.get_profile(user_id)
