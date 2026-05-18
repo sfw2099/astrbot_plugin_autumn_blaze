@@ -1508,7 +1508,7 @@ class AutumnBlazePlugin(Star):
             "    【忆前世】：追忆自己昨日所有羁绊（需困难成功）\n"
             "── 管理 ──\n"
             "15. 【重置记录】：(管理员) 清空今日数据\n"
-            "16. 【重置次数】：(管理员) 重置强娶/斩红尘/点鸳鸯的次数\n"
+            "16. 【重置次数】：(管理员) 重置强娶/斩红尘/点鸳鸯/换连理/忆前世的次数\n"
             f"── 设置 ──\n"
             f"当前每日上限：{daily_limit}次\n"
         )
@@ -1540,14 +1540,16 @@ class AutumnBlazePlugin(Star):
             "强娶": "force_marry", "qiangqu": "force_marry",
             "斩红尘": "sever_ties", "zch": "sever_ties",
             "点鸳鸯": "dian_yuanyang", "dyy": "dian_yuanyang",
+            "换连理": "swap_bonds", "hll": "swap_bonds",
+            "忆前世": "recall_past", "ysq": "recall_past",
         }
         if len(parts) < 2:
-            yield event.plain_result("请指定类型：强娶、斩红尘、点鸳鸯")
+            yield event.plain_result("请指定类型：强娶、斩红尘、点鸳鸯、换连理、忆前世")
             return
         action = parts[1].strip()
         target_type = type_map.get(action)
         if not target_type:
-            yield event.plain_result(f"不支持的类型：{action}，可选：强娶、斩红尘、点鸳鸯")
+            yield event.plain_result(f"不支持的类型：{action}，可选：强娶、斩红尘、点鸳鸯、换连理、忆前世")
             return
         group_records = self._get_group_records(group_id)
         removed = [r for r in group_records if r.get("type") == target_type]
