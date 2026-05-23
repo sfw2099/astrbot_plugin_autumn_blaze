@@ -63,6 +63,7 @@ class AutumnBlazePlugin(Star):
         self.active_file = os.path.join(self.data_dir, "active_users.json")
         self.forced_file = os.path.join(self.data_dir, "forced_marriage.json")
         self.profiles_dir = os.path.join(self.data_dir, "profiles")
+        self.group_fortune_file = os.path.join(self.data_dir, "group_fortune.json")
 
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(self.records_dir, exist_ok=True)
@@ -72,6 +73,7 @@ class AutumnBlazePlugin(Star):
         self._cleanup_old_records()
         self.active_users = load_json(self.active_file, {})
         self.forced_records = load_json(self.forced_file, {})
+        self.group_fortune = load_json(self.group_fortune_file, {})
 
         self._profile_manager = ProfileManager(self.profiles_dir)
 
@@ -91,6 +93,7 @@ class AutumnBlazePlugin(Star):
             "swap_bonds": self._cmd_swap_bonds,
             "give_fortune": self._cmd_give_fortune,
             "recall_past": self._cmd_recall_past,
+            "group_fortune": self._cmd_group_fortune,
         }
         self._keyword_trigger_block_prefixes = ("/", "!", "！")
         logger.info(f"秋焰插件已加载。数据目录: {self.data_dir}")
@@ -114,6 +117,21 @@ class AutumnBlazePlugin(Star):
                     os.remove(os.path.join(self.records_dir, f))
             except ValueError:
                 continue
+
+    def _ensure_group_fortune(self, group_id: str) -> dict:
+        today = datetime.now().strftime("%Y-%m-%d")
+        if group_id not in self.group_fortune:
+            self.group_fortune[group_id] = {"fortune": 60, "date": today, "today_members": []}
+            return self.group_fortune[group_id]
+        gd = self.group_fortune[group_id]
+        if gd.get("date") != today:
+            gd["fortune"] = 60
+            gd["date"] = today
+            gd["today_members"] = []
+        return gd
+
+    def _save_group_fortune(self):
+        save_json(self.group_fortune_file, self.group_fortune)
 
     def _migrate_old_records(self):
         old_path = os.path.join(self.data_dir, "wife_records.json")
@@ -264,6 +282,16 @@ class AutumnBlazePlugin(Star):
         is_weighted = config.get("weighted_random", True)
         rp = self._generate_fortune(is_weighted)
         self._profile_manager.set_fortune(user_id, rp, modifications=max_modify)
+
+        # Group fortune
+        group_id = str(event.get_group_id())
+        if group_id:
+            group_fd = self._ensure_group_fortune(group_id)
+            if str(user_id) not in group_fd["today_members"]:
+                bonus = max(1, min(5, rp // 20 + 1))
+                group_fd["fortune"] += bonus
+                group_fd["today_members"].append(str(user_id))
+                self._save_group_fortune()
         try:
             ai_text = await self._ai_reply(event, user_name, rp)
             if ai_text:
@@ -290,8 +318,9 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result(f"{user_name}，今日的修改运势次数已用完！运势值：{current_rp}")
             return
 
-        # COC 判定：技能值 = 100 - 当前运势（越低越容易改）
-        skill = 100 - current_rp
+        # COC 判定：技能值 = (100 - 当前运势) + 本群运势 / 2
+        group_fd = self._ensure_group_fortune(str(event.get_group_id()))
+        skill = (100 - current_rp) + group_fd["fortune"] // 2
         result = self._profile_manager._coc_roll(skill)
         roll = result["roll"]
         label = result["label"]
@@ -1116,16 +1145,51 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result("此功能仅在群聊中可用哦~")
             return
         user_id = str(event.get_sender_id())
-        if not is_allowed_group(str(event.get_group_id()), self.config):
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
             yield event.plain_result("此功能在当前群聊不可用。")
             return
 
         target_id = extract_target_id_from_message(event)
+        cq_at = [c for c in event.message_obj.message if isinstance(c, Comp.At)]
+
         if not target_id or target_id == user_id:
-            yield event.plain_result("请 @ 一位群友来赠予运势。")
+            # 赠予群体
+            if len(cq_at) > 1:
+                yield event.plain_result("一次只能赠予一位群友哦~")
+                return
+            my_fortune = self._profile_manager.get_fortune(user_id)
+            if my_fortune is None:
+                yield event.plain_result("你今天还没有签到获取运势，无法赠予。")
+                return
+            if my_fortune < 5:
+                yield event.plain_result("你的运势值过低（<5），无法赠予群体。")
+                return
+
+            group_records = self._get_group_records(group_id)
+            if any(r["user_id"] == user_id and r.get("type") == "give_fortune" for r in group_records):
+                yield event.plain_result("你今天已经赠予过运势了，每日只能赠予一次哦~")
+                return
+
+            new_fortune = max(1, my_fortune - 5)
+            self._profile_manager.set_fortune(user_id, new_fortune, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+
+            group_fd = self._ensure_group_fortune(group_id)
+            group_fd["fortune"] += 1
+            self._save_group_fortune()
+
+            group_records.append({"user_id": user_id, "type": "give_fortune", "success": True, "timestamp": datetime.now().isoformat()})
+            save_json(self._today_records_path(), self.records)
+
+            user_name = event.get_sender_name() or f"用户({user_id})"
+            yield event.plain_result(
+                f"🎁 {user_name} 将运势赠予了群体！\n"
+                f"个人运势：{my_fortune} → {new_fortune}（-5）\n"
+                f"本群运势 +1，当前：{group_fd['fortune']}"
+            )
             return
 
-        cq_at = [c for c in event.message_obj.message if isinstance(c, Comp.At)]
+        # 赠予个人（原有逻辑）
         if len(cq_at) > 1:
             yield event.plain_result("一次只能赠予一位群友哦~")
             return
@@ -1186,6 +1250,34 @@ class AutumnBlazePlugin(Star):
             f"🎁 {user_name} 赠予了 {target_name} 运势！\n"
             f"双方运势已平均为：{avg}\n"
             f"双方羁绊值 +5"
+        )
+
+    # ==================== 本群运势 ====================
+
+    @filter.command("本群运势", alias={"bqys"})
+    async def group_fortune_cmd(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_group_fortune(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 本群运势异常: {e}", exc_info=True)
+            yield event.plain_result(f"本群运势出错了：{e}")
+
+    async def _cmd_group_fortune(self, event: AstrMessageEvent):
+        if event.is_private_chat():
+            yield event.plain_result("此功能仅在群聊中可用哦~")
+            return
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+        fd = self._ensure_group_fortune(group_id)
+        count = len(fd["today_members"])
+        yield event.plain_result(
+            f"📊 本群今日运势：{fd['fortune']}\n"
+            f"今日签到人数：{count} 人\n"
+            f"每人签到可为本群增加 1~5 点运势\n"
+            f"群运势可提升修改运势的成功率"
         )
 
     # ==================== 忆前世 ====================
