@@ -47,6 +47,12 @@
         "hint": "每位用户每天可以忆前世的的最大次数。",
         "default": 1
     },
+    "steal_limit": {
+        "type": "int",
+        "description": "每日夺取运势次数上限",
+        "hint": "每位用户每天可以夺取运势的最大次数。",
+        "default": 1
+    },
     "max_records": {
         "type": "int",
         "description": "活跃群友记录上限",

@@ -43,4 +43,7 @@ _DEFAULT_KEYWORD_ROUTES: tuple[KeywordRoute, ...] = (
 
     KeywordRoute(keyword="本群运势", action="group_fortune"),
     KeywordRoute(keyword="bqys", action="group_fortune"),
+
+    KeywordRoute(keyword="夺取运势", action="steal_fortune"),
+    KeywordRoute(keyword="dqys", action="steal_fortune"),
 )

@@ -94,6 +94,7 @@ class AutumnBlazePlugin(Star):
             "give_fortune": self._cmd_give_fortune,
             "recall_past": self._cmd_recall_past,
             "group_fortune": self._cmd_group_fortune,
+            "steal_fortune": self._cmd_steal_fortune,
         }
         self._keyword_trigger_block_prefixes = ("/", "!", "！")
         logger.info(f"秋焰插件已加载。数据目录: {self.data_dir}")
@@ -1272,13 +1273,207 @@ class AutumnBlazePlugin(Star):
             yield event.plain_result("此功能在当前群聊不可用。")
             return
         fd = self._ensure_group_fortune(group_id)
-        count = len(fd["today_members"])
-        yield event.plain_result(
-            f"📊 本群今日运势：{fd['fortune']}\n"
-            f"今日签到人数：{count} 人\n"
-            f"每人签到可为本群增加 1~5 点运势\n"
-            f"群运势可提升修改运势的成功率"
-        )
+
+        # Fetch member names once
+        member_map = {}
+        try:
+            if event.get_platform_name() == "aiocqhttp":
+                resp = await event.bot.api.call_action("get_group_member_list", group_id=int(group_id))
+                if isinstance(resp, dict) and "data" in resp:
+                    resp = resp["data"]
+                for m in resp:
+                    uid = str(m.get("user_id"))
+                    member_map[uid] = m.get("card") or m.get("nickname") or f"用户({uid})"
+        except Exception:
+            pass
+
+        members = []
+        for uid in fd["today_members"]:
+            ft = self._profile_manager.get_fortune(uid)
+            if ft is not None:
+                name = member_map.get(uid, f"用户({uid})")
+                members.append((name, ft))
+        members.sort(key=lambda x: -x[1])
+
+        lines = [f"📊 本群今日运势：{fd['fortune']}", f"今日签到人数：{len(members)} 人"]
+        if members:
+            lines.append("")
+            for name, ft in members:
+                lines.append(f"  {name}：{ft}")
+        lines.extend(["", "签到可增加群运势，群运势可提升修改运势成功率"])
+
+        yield event.plain_result("\n".join(lines))
+
+    # ==================== 夺取运势 ====================
+
+    @filter.command("夺取运势", alias={"dqys"})
+    async def steal_fortune(self, event: AstrMessageEvent):
+        try:
+            async for result in self._cmd_steal_fortune(event):
+                yield result
+        except Exception as e:
+            logger.error(f"[autumn_blaze] 夺取运势异常: {e}", exc_info=True)
+            yield event.plain_result(f"夺取运势出错了：{e}")
+
+    async def _cmd_steal_fortune(self, event: AstrMessageEvent):
+        if event.is_private_chat():
+            yield event.plain_result("此功能仅在群聊中可用哦~")
+            return
+        user_id = str(event.get_sender_id())
+        group_id = str(event.get_group_id())
+        if not is_allowed_group(group_id, self.config):
+            yield event.plain_result("此功能在当前群聊不可用。")
+            return
+
+        steal_limit = self.config.get("steal_limit", 1)
+        group_records = self._get_group_records(group_id)
+        steal_recs = [r for r in group_records if r["user_id"] == user_id and r.get("type") == "steal"]
+        if len(steal_recs) >= steal_limit:
+            yield event.plain_result(f"今日夺取运势次数已用完 ({len(steal_recs)}/{steal_limit})。")
+            return
+
+        my_fortune = self._profile_manager.get_fortune(user_id)
+        if my_fortune is None:
+            yield event.plain_result("你今天还没有签到获取运势。")
+            return
+
+        my_fortune_original = my_fortune
+        target_id = extract_target_id_from_message(event)
+        cq_at = [c for c in event.message_obj.message if isinstance(c, Comp.At)]
+
+        if target_id and target_id != user_id:
+            if len(cq_at) > 1:
+                yield event.plain_result("一次只能夺取一个人的运势哦~")
+                return
+            # ---- 夺取个人 ----
+            target_fortune = self._profile_manager.get_fortune(target_id)
+            if target_fortune is None:
+                yield event.plain_result("对方今天还没有签到获取运势。")
+                return
+
+            skill = my_fortune
+            level_labels = {0: "大成功", 5: "大失败"}
+            roll_result = self._profile_manager._coc_roll(skill)
+            dice_text = f"D100={roll_result['roll']}/{skill} {roll_result['label']}"
+            user_name = event.get_sender_name() or f"用户({user_id})"
+
+            if roll_result["level"] == 0:  # 大成功
+                take = (target_fortune + 1) // 2
+                new_my = min(99, my_fortune + take)
+                new_target = max(1, target_fortune - take)
+                self._profile_manager.set_fortune(user_id, new_my, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+                self._profile_manager.set_fortune(target_id, new_target, modifications=self._profile_manager.get_profile(target_id).get("modifications_left", 0))
+                profile = self._profile_manager.get_profile(user_id)
+                profile["bond"] = _clamp(profile.get("bond", 50) + 10)
+                self._profile_manager.save_profile(user_id, profile)
+                group_records.append({"user_id": user_id, "type": "steal", "success": True, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"🌟 大成功！{dice_text}\n夺取了对方一半运势（+{take}），当前运势：{new_my}\n羁绊 +10")
+                return
+
+            elif roll_result["level"] == 5:  # 大失败
+                lose = (my_fortune + 1) // 2
+                new_my = max(1, my_fortune - lose)
+                new_target = min(99, target_fortune + lose)
+                self._profile_manager.set_fortune(user_id, new_my, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+                self._profile_manager.set_fortune(target_id, new_target, modifications=self._profile_manager.get_profile(target_id).get("modifications_left", 0))
+                profile = self._profile_manager.get_profile(user_id)
+                profile["bond"] = _clamp(profile.get("bond", 50) - 5)
+                self._profile_manager.save_profile(user_id, profile)
+                group_records.append({"user_id": user_id, "type": "steal", "success": False, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"💀 大失败！{dice_text}\n损失了一半运势（-{lose}），当前运势：{new_my}\n羁绊 -5")
+                return
+
+            elif roll_result["level"] <= 3:  # 成功
+                new_my = min(99, my_fortune + 10)
+                new_target = max(1, target_fortune - 10)
+                self._profile_manager.set_fortune(user_id, new_my, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+                self._profile_manager.set_fortune(target_id, new_target, modifications=self._profile_manager.get_profile(target_id).get("modifications_left", 0))
+                group_records.append({"user_id": user_id, "type": "steal", "success": True, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"✅ 夺取成功！{dice_text}\n夺取了 10 点运势，当前运势：{new_my}")
+                return
+
+            else:  # 失败
+                new_my = max(1, my_fortune - 10)
+                new_target = min(99, target_fortune + 10)
+                self._profile_manager.set_fortune(user_id, new_my, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+                self._profile_manager.set_fortune(target_id, new_target, modifications=self._profile_manager.get_profile(target_id).get("modifications_left", 0))
+                group_records.append({"user_id": user_id, "type": "steal", "success": False, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"❌ 夺取失败！{dice_text}\n反被夺走 10 点运势，当前运势：{new_my}")
+                return
+
+        else:
+            # ---- 夺取群体 ----
+            skill = my_fortune // 2
+            roll_result = self._profile_manager._coc_roll(skill)
+            dice_text = f"D100={roll_result['roll']}/{skill} {roll_result['label']}"
+            group_fd = self._ensure_group_fortune(group_id)
+
+            if roll_result["level"] == 0:  # 大成功
+                group_fd["fortune"] -= 5
+                new_my = min(99, my_fortune + 25)
+                self._profile_manager.set_fortune(user_id, new_my, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+                profile = self._profile_manager.get_profile(user_id)
+                profile["bond"] = clamp(profile.get("bond", 50) + 10)
+                self._profile_manager.save_profile(user_id, profile)
+                self._save_group_fortune()
+                group_records.append({"user_id": user_id, "type": "steal", "success": True, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"🌟 大成功！{dice_text}\n从群运势夺走 5 点，个人运势 +25，当前运势：{new_my}\n群运势：{group_fd['fortune']}\n羁绊 +10")
+                return
+
+            elif roll_result["level"] == 5:  # 大失败
+                lose = (my_fortune + 1) // 2
+                new_my = max(1, my_fortune - lose)
+                group_fd["fortune"] += lose // 5
+                self._profile_manager.set_fortune(user_id, new_my, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+                profile = self._profile_manager.get_profile(user_id)
+                profile["bond"] = clamp(profile.get("bond", 50) - 5)
+                self._profile_manager.save_profile(user_id, profile)
+                self._save_group_fortune()
+                group_records.append({"user_id": user_id, "type": "steal", "success": False, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"💀 大失败！{dice_text}\n损失了一半运势（-{lose}），当前运势：{new_my}\n群运势 +{lose//5}，当前：{group_fd['fortune']}\n羁绊 -5")
+                return
+
+            elif roll_result["level"] <= 1:  # 极难成功
+                group_fd["fortune"] -= 4
+                new_my = min(99, my_fortune + 20)
+                self._profile_manager.set_fortune(user_id, new_my, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+                self._save_group_fortune()
+                group_records.append({"user_id": user_id, "type": "steal", "success": True, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"✨ 极难成功！{dice_text}\n从群运势夺走 4 点，个人运势 +20，当前运势：{new_my}\n群运势：{group_fd['fortune']}")
+                return
+
+            elif roll_result["level"] <= 2:  # 困难成功
+                group_fd["fortune"] -= 3
+                new_my = min(99, my_fortune + 15)
+                self._profile_manager.set_fortune(user_id, new_my, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+                self._save_group_fortune()
+                group_records.append({"user_id": user_id, "type": "steal", "success": True, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"🌟 困难成功！{dice_text}\n从群运势夺走 3 点，个人运势 +15，当前运势：{new_my}\n群运势：{group_fd['fortune']}")
+                return
+
+            elif roll_result["level"] <= 3:  # 常规成功
+                group_fd["fortune"] -= 2
+                new_my = min(99, my_fortune + 10)
+                self._profile_manager.set_fortune(user_id, new_my, modifications=self._profile_manager.get_profile(user_id).get("modifications_left", 0))
+                self._save_group_fortune()
+                group_records.append({"user_id": user_id, "type": "steal", "success": True, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"🌸 常规成功！{dice_text}\n从群运势夺走 2 点，个人运势 +10，当前运势：{new_my}\n群运势：{group_fd['fortune']}")
+                return
+
+            else:  # 失败
+                group_records.append({"user_id": user_id, "type": "steal", "success": False, "timestamp": datetime.now().isoformat()})
+                save_json(self._today_records_path(), self.records)
+                yield event.plain_result(f"夺取失败，未造成影响。{dice_text}")
+                return
 
     # ==================== 忆前世 ====================
 
