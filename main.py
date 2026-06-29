@@ -1690,6 +1690,8 @@ class AutumnBlazePlugin(Star):
         except Exception as e:
             logger.error(f"渲染失败: {e}")
             yield event.plain_result(f"关系图生成失败，请稍后再试。")
+
+    async def _cmd_show_ego_graph(self, event: AstrMessageEvent):
         group_id = str(event.get_group_id())
         if not is_allowed_group(group_id, self.config):
             yield event.plain_result("此功能在当前群聊不可用。")
