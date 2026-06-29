@@ -1689,8 +1689,7 @@ class AutumnBlazePlugin(Star):
             yield event.image_result(url)
         except Exception as e:
             logger.error(f"渲染失败: {e}")
-
-    async def _cmd_show_ego_graph(self, event: AstrMessageEvent):
+            yield event.plain_result(f"关系图生成失败，请稍后再试。")
         group_id = str(event.get_group_id())
         if not is_allowed_group(group_id, self.config):
             yield event.plain_result("此功能在当前群聊不可用。")
@@ -1754,8 +1753,7 @@ class AutumnBlazePlugin(Star):
             yield event.image_result(url)
         except Exception as e:
             logger.error(f"渲染失败: {e}")
-
-    # ==================== 帮助 ====================
+            yield event.plain_result(f"个人关系图生成失败，请稍后再试。")
 
     @filter.command("抽老婆帮助", alias={"老婆插件帮助", "clpbz", "帮助"})
     async def show_help(self, event: AstrMessageEvent):
