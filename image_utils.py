@@ -195,3 +195,111 @@ def _render_grid_pil(plugin, qq_list: list[str]) -> str:
 
     canvas.save(out, "PNG")
     return out
+
+
+async def render_relationship_graph(records, user_map, title, temp_dir, is_ego=False, focus_id=None) -> str:
+    return _render_graph_pil(records, user_map, title, temp_dir, is_ego, focus_id)
+
+
+def _render_graph_pil(records, user_map, title, temp_dir, is_ego=False, focus_id=None) -> str:
+    if _TEMP_DIR is None:
+        _init_temp(os.path.join(temp_dir, "temp"))
+    out = _temp_path("graph")
+
+    nodes = {}
+    for r in records:
+        uid = str(r.get("user_id"))
+        wid = str(r.get("wife_id"))
+        nodes[uid] = user_map.get(uid, f"用户{uid}")
+        nodes[wid] = user_map.get(wid, f"用户{wid}")
+
+    n = len(nodes)
+    if n == 0:
+        img = Image.new("RGB", (400, 100), (255, 255, 255))
+        ImageDraw.Draw(img).text((200, 50), "暂无数据", fill=(128, 128, 128), font=_try_font(18), anchor="mm")
+        img.save(out, "PNG")
+        return out
+
+    pad = 60
+    node_r = 36
+    w = 1920
+    h = max(800, pad * 2 + n * 80 + 200)
+
+    img = Image.new("RGB", (w, h), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+
+    font_title = _try_font(28)
+    font_name = _try_font(16)
+    font_legend = _try_font(14)
+
+    draw.text((w // 2, 20), title, fill=(40, 40, 40), font=font_title, anchor="mt")
+
+    edge_colors = {
+        "dian_yuanyang": (235, 47, 150),
+        "proposed": (250, 84, 28),
+        "forced_all": (207, 19, 34),
+        "forced": (255, 77, 79),
+        "auto_set": (114, 46, 209),
+    }
+
+    node_list = list(nodes.items())
+    cx, cy = w // 2, h // 2 + 20
+    radius = min(w // 2 - pad * 3, h // 2 - pad) - node_r
+
+    positions = {}
+    for i, (uid, name) in enumerate(node_list):
+        angle = 2 * math.pi * i / n - math.pi / 2
+        x = cx + radius * math.cos(angle)
+        y = cy + radius * math.sin(angle)
+        positions[uid] = (x, y)
+
+    for r_item in records:
+        uid = str(r_item.get("user_id"))
+        wid = str(r_item.get("wife_id"))
+        if uid not in positions or wid not in positions:
+            continue
+        x1, y1 = positions[uid]
+        x2, y2 = positions[wid]
+
+        color = (24, 144, 255)
+        for ek in edge_colors:
+            if r_item.get(ek):
+                color = edge_colors[ek]
+                break
+
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        dx, dy = x2 - x1, y2 - y1
+        dist = math.hypot(dx, dy)
+        if dist > 0:
+            nx, ny = -dy / dist, dx / dist
+            mx += nx * 30
+            my += ny * 30
+
+        draw.line([(x1, y1), (mx, my), (x2, y2)], fill=color, width=2)
+
+        angle = math.atan2(y2 - my, x2 - mx)
+        al = 10
+        ax1 = x2 - al * math.cos(angle - 0.5)
+        ay1 = y2 - al * math.sin(angle - 0.5)
+        ax2 = x2 - al * math.cos(angle + 0.5)
+        ay2 = y2 - al * math.sin(angle + 0.5)
+        draw.polygon([(x2, y2), (ax1, ay1), (ax2, ay2)], fill=color)
+
+    for uid, (x, y) in positions.items():
+        is_focus = is_ego and uid == focus_id
+        bg_color = (250, 140, 22) if is_focus else (79, 172, 254)
+        draw.ellipse([x - node_r, y - node_r, x + node_r, y + node_r], fill=bg_color, outline=(255, 255, 255), width=3)
+        name = nodes[uid][:6]
+        bbox = draw.textbbox((0, 0), name, font=font_name)
+        tw = bbox[2] - bbox[0]
+        draw.text((x - tw // 2, y + node_r + 4), name, fill=(60, 60, 60), font=font_name)
+
+    ly = h - 60
+    lx = 20
+    for label, clr in [("抽中", (24,144,255)), ("强娶", (255,77,79)), ("牵线", (235,47,150)), ("求婚", (250,84,28)), ("全娶", (207,19,34)), ("互抽", (114,46,209))]:
+        draw.rectangle([lx, ly, lx + 14, ly + 14], fill=clr)
+        draw.text((lx + 18, ly), label, fill=(80, 80, 80), font=font_legend)
+        lx += 90
+
+    img.save(out, "PNG")
+    return out

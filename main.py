@@ -16,7 +16,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 from .keyword_trigger import KeywordRouter, MatchMode
 from .onebot_api import extract_message_id
 from .waifu_relations import maybe_add_other_half_record
-from .image_utils import render_couple, render_grid
+from .image_utils import render_couple, render_grid, render_relationship_graph
 from .profiles import ProfileManager, _clamp
 from .propose import cmd_propose, handle_propose_response
 
@@ -1689,8 +1689,14 @@ class AutumnBlazePlugin(Star):
             })
             yield event.image_result(url)
         except Exception as e:
-            logger.error(f"渲染失败: {type(e).__name__}: {e}", exc_info=True)
-            yield event.plain_result(f"关系图生成失败，请稍后再试。")
+            logger.error(f"渲染失败: {type(e).__name__}: {e}")
+            logger.info(f"[autumn_blaze] t2i 失败，降级为 PIL 绘图")
+            try:
+                img_path = await render_relationship_graph(group_data, user_map, f"群 {group_name} 今日老婆羁绊图谱", self.curr_dir)
+                yield event.image_result(img_path)
+            except Exception as e2:
+                logger.error(f"PIL 绘图也失败: {type(e2).__name__}: {e2}", exc_info=True)
+                yield event.plain_result(f"关系图生成失败，请稍后再试。")
 
     async def _cmd_show_ego_graph(self, event: AstrMessageEvent):
         group_id = str(event.get_group_id())
@@ -1756,8 +1762,14 @@ class AutumnBlazePlugin(Star):
             })
             yield event.image_result(url)
         except Exception as e:
-            logger.error(f"个人关系图渲染失败: {type(e).__name__}: {e}", exc_info=True)
-            yield event.plain_result(f"个人关系图生成失败，请稍后再试。")
+            logger.error(f"个人关系图渲染失败: {type(e).__name__}: {e}")
+            logger.info(f"[autumn_blaze] t2i 失败，降级为 PIL 绘图")
+            try:
+                img_path = await render_relationship_graph(ego_data, user_map, f"{focus_node_name} 的个人关系图谱", self.curr_dir, is_ego=True, focus_id=user_id)
+                yield event.image_result(img_path)
+            except Exception as e2:
+                logger.error(f"PIL 绘图也失败: {type(e2).__name__}: {e2}", exc_info=True)
+                yield event.plain_result(f"个人关系图生成失败，请稍后再试。")
 
     @filter.command("抽老婆帮助", alias={"老婆插件帮助", "clpbz", "帮助"})
     async def show_help(self, event: AstrMessageEvent):
