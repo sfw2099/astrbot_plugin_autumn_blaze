@@ -1676,6 +1676,7 @@ class AutumnBlazePlugin(Star):
         node_count = len(unique_nodes)
         clip_width = 1920
         clip_height = 1080 + (max(0, node_count - 10) * 60)
+        logger.info(f"[autumn_blaze] 关系图: nodes={node_count}, edges={len(group_data)}, vis_js={len(vis_js_content)}bytes")
         try:
             url = await self.html_render(graph_html, {
                 "vis_js_content": vis_js_content, "group_id": group_id,
@@ -1688,7 +1689,7 @@ class AutumnBlazePlugin(Star):
             })
             yield event.image_result(url)
         except Exception as e:
-            logger.error(f"渲染失败: {e}")
+            logger.error(f"渲染失败: {type(e).__name__}: {e}", exc_info=True)
             yield event.plain_result(f"关系图生成失败，请稍后再试。")
 
     async def _cmd_show_ego_graph(self, event: AstrMessageEvent):
@@ -1739,6 +1740,7 @@ class AutumnBlazePlugin(Star):
         node_count = len(unique_nodes)
         clip_width = 1920
         clip_height = 1080 + (max(0, node_count - 5) * 80)
+        logger.info(f"[autumn_blaze] 个人关系图: nodes={node_count}, edges={len(ego_data)}, vis_js={len(vis_js_content)}bytes")
         try:
             url = await self.html_render(graph_html, {
                 "vis_js_content": vis_js_content,
@@ -1754,7 +1756,7 @@ class AutumnBlazePlugin(Star):
             })
             yield event.image_result(url)
         except Exception as e:
-            logger.error(f"渲染失败: {e}")
+            logger.error(f"个人关系图渲染失败: {type(e).__name__}: {e}", exc_info=True)
             yield event.plain_result(f"个人关系图生成失败，请稍后再试。")
 
     @filter.command("抽老婆帮助", alias={"老婆插件帮助", "clpbz", "帮助"})
